@@ -7,22 +7,30 @@ import type {
   C2SMessage,
   ClientGameState,
   ClientPlayer,
+  DeadViewMode,
   PlayerRole,
   S2CMessage,
 } from '../src/lib/game/types';
 import { transition, InvalidActionError } from '../src/lib/game/state-machine';
-import { createRoom, joinRoom, getRoom, updateRoom } from './room-manager';
+import { createRoom, joinRoom, getRoom, updateRoom, createSandboxRoom } from './room-manager';
 import { encode } from './protocol';
 import * as livekit from './livekit';
 
-// Track which WS belongs to which room/player
 interface ConnectionInfo {
   roomCode: RoomCode;
   playerId: PlayerId;
 }
 
+interface SandboxConnectionInfo {
+  roomCode: RoomCode;
+  hostId: PlayerId;
+  playerIds: PlayerId[];
+  viewingAs: PlayerId;
+}
+
 const connections = new Map<WebSocket, ConnectionInfo>();
-const playerSockets = new Map<string, WebSocket>(); // `${roomCode}:${playerId}` -> ws
+const sandboxConnections = new Map<WebSocket, SandboxConnectionInfo>();
+const playerSockets = new Map<string, WebSocket>();
 
 function socketKey(roomCode: string, playerId: string) {
   return `${roomCode}:${playerId}`;
@@ -33,7 +41,7 @@ export function handleConnection(ws: WebSocket): void {
     try {
       const msg = JSON.parse(data.toString()) as C2SMessage;
       handleMessage(ws, msg);
-    } catch (err) {
+    } catch {
       send(ws, { type: 'error', message: 'Invalid message format' });
     }
   });
@@ -56,10 +64,13 @@ export function handleConnection(ws: WebSocket): void {
 function handleMessage(ws: WebSocket, msg: C2SMessage): void {
   switch (msg.type) {
     case 'create_room':
-      handleCreateRoom(ws, msg.playerName);
+      handleCreateRoom(ws, msg.playerName, msg.settings);
       break;
     case 'join_room':
       handleJoinRoom(ws, msg.roomCode, msg.playerName);
+      break;
+    case 'reconnect':
+      handleReconnect(ws, msg.roomCode, msg.playerId);
       break;
     case 'host_action':
       handleAction(ws, msg.action, true);
@@ -67,31 +78,58 @@ function handleMessage(ws: WebSocket, msg: C2SMessage): void {
     case 'player_action':
       handleAction(ws, msg.action, false);
       break;
+    case 'create_sandbox':
+      handleCreateSandbox(ws, msg.playerCount, msg.settings);
+      break;
+    case 'sandbox_action':
+      handleSandboxAction(ws, msg.asPlayerId, msg.action);
+      break;
+    case 'switch_view':
+      handleSwitchView(ws, msg.playerId);
+      break;
+    case 'set_dead_view':
+      handleSetDeadView(ws, msg.mode);
+      break;
     case 'ping':
       send(ws, { type: 'pong' });
       break;
   }
 }
 
-function handleCreateRoom(ws: WebSocket, playerName: string): void {
-  const { room, hostId } = createRoom(playerName);
+function handleCreateRoom(ws: WebSocket, playerName: string, settings?: Partial<import('../src/lib/game/types').RoomSettings>): void {
+  const { room, hostId } = createRoom(playerName, settings);
 
   connections.set(ws, { roomCode: room.code, playerId: hostId });
   playerSockets.set(socketKey(room.code, hostId), ws);
 
-  send(ws, {
-    type: 'room_created',
-    roomCode: room.code,
-    playerId: hostId,
-  });
+  send(ws, { type: 'room_created', roomCode: room.code, playerId: hostId });
   broadcastState(room.code);
 }
 
-function handleJoinRoom(
-  ws: WebSocket,
-  roomCode: string,
-  playerName: string,
-): void {
+function handleReconnect(ws: WebSocket, roomCode: string, playerId: string): void {
+  const room = getRoom(roomCode.toUpperCase());
+  if (!room) {
+    send(ws, { type: 'error', message: 'Room not found' });
+    return;
+  }
+
+  const player = room.players[playerId];
+  if (!player) {
+    send(ws, { type: 'error', message: 'Player not found in room' });
+    return;
+  }
+
+  connections.set(ws, { roomCode: room.code, playerId });
+  playerSockets.set(socketKey(room.code, playerId), ws);
+
+  player.isConnected = true;
+  updateRoom(room.code, room);
+
+  send(ws, { type: 'reconnected', playerId, roomCode: room.code, role: player.role });
+  broadcastState(room.code);
+}
+
+function handleJoinRoom(ws: WebSocket, roomCode: string, playerName: string): void {
   const result = joinRoom(roomCode.toUpperCase(), playerName);
   if (!result) {
     send(ws, { type: 'error', message: 'Room not found or game already started' });
@@ -102,19 +140,11 @@ function handleJoinRoom(
   connections.set(ws, { roomCode: room.code, playerId });
   playerSockets.set(socketKey(room.code, playerId), ws);
 
-  send(ws, {
-    type: 'room_joined',
-    playerId,
-    roomCode: room.code,
-  });
+  send(ws, { type: 'room_joined', playerId, roomCode: room.code });
   broadcastState(room.code);
 }
 
-function handleAction(
-  ws: WebSocket,
-  action: GameAction,
-  isHostAction: boolean,
-): void {
+function handleAction(ws: WebSocket, action: GameAction, isHostAction: boolean): void {
   const info = connections.get(ws);
   if (!info) {
     send(ws, { type: 'error', message: 'Not in a room' });
@@ -127,37 +157,33 @@ function handleAction(
     return;
   }
 
-  // Validate host-only actions
   if (isHostAction && info.playerId !== room.hostId) {
     send(ws, { type: 'error', message: 'Only the host can do that' });
     return;
   }
 
-  const prevPhase = room.phase;
+  // Validate player-side actions
+  if (!isHostAction) {
+    const allowed: GameAction['type'][] = ['cast_vote'];
+    if (!allowed.includes(action.type)) {
+      send(ws, { type: 'error', message: 'Action not allowed for players' });
+      return;
+    }
+  }
 
   try {
     const newState = transition(room, action);
     updateRoom(info.roomCode, newState);
 
-    // Handle role assignment on game start
-    if (
-      prevPhase.type === 'lobby' &&
-      newState.phase.type === 'night'
-    ) {
+    // LiveKit side effects for host actions
+    if (isHostAction) {
+      handleLivekitSideEffects(newState, action).catch(console.error);
+    }
+
+    // Notify players of role assignments when game starts
+    if (room.phase.type === 'lobby' && newState.phase.type !== 'lobby') {
       notifyRoleAssignments(info.roomCode, newState);
     }
-
-    // Handle night results when transitioning to day announcement
-    if (
-      prevPhase.type === 'night' &&
-      newState.phase.type === 'day' &&
-      newState.phase.subphase === 'announcement'
-    ) {
-      notifyNightResults(info.roomCode, newState);
-    }
-
-    // Handle LiveKit mute state changes
-    handleMuteChanges(newState, prevPhase).catch(console.error);
 
     broadcastState(info.roomCode);
   } catch (err) {
@@ -170,72 +196,118 @@ function handleAction(
   }
 }
 
-async function handleMuteChanges(
-  room: GameRoom,
-  prevPhase: GameRoom['phase'],
-): Promise<void> {
-  const { phase, livekitRoomName, hostId } = room;
+async function handleLivekitSideEffects(room: GameRoom, action: GameAction): Promise<void> {
+  const { livekitRoomName, hostId } = room;
 
-  // Night phase: mute all except host + restrict visibility
-  if (phase.type === 'night' && prevPhase.type !== 'night') {
-    await livekit.muteAll(livekitRoomName, hostId);
-    await livekit.updateVisibility(livekitRoomName, room.players, hostId, phase);
-  }
-
-  // Night subphase change: mafia can publish during deliberation
-  if (
-    phase.type === 'night' &&
-    prevPhase.type === 'night' &&
-    phase.subphase !== prevPhase.subphase
-  ) {
-    await livekit.updateVisibility(livekitRoomName, room.players, hostId, phase);
-  }
-
-  // Day discussion: speaker-based muting
-  if (
-    phase.type === 'day' &&
-    phase.subphase === 'discussion' &&
-    room.speaking.currentSpeaker
-  ) {
-    await livekit.muteAllExceptSpeaker(
-      livekitRoomName,
-      room.speaking.currentSpeaker,
-      hostId,
-    );
-  }
-
-  // Day voting / announcement: unmute all + restore full visibility
-  if (
-    phase.type === 'day' &&
-    (phase.subphase === 'voting' ||
-      phase.subphase === 'announcement' ||
-      phase.subphase === 'defense')
-  ) {
-    if (
-      prevPhase.type === 'night' ||
-      (prevPhase.type === 'day' && prevPhase.subphase === 'discussion')
-    ) {
+  switch (action.type) {
+    case 'mute_all':
+      await livekit.muteAll(livekitRoomName, hostId);
+      break;
+    case 'unmute_all':
       await livekit.unmuteAll(livekitRoomName);
-    }
-    // Restore full visibility when entering day from night
-    if (prevPhase.type === 'night') {
-      await livekit.updateVisibility(livekitRoomName, room.players, hostId, phase);
-    }
-  }
-
-  // Game over: restore full visibility
-  if (phase.type === 'gameover' && prevPhase.type !== 'gameover') {
-    await livekit.updateVisibility(livekitRoomName, room.players, hostId, phase);
-  }
-
-  // Player eliminated: set as spectator
-  if (phase.type === 'gameover' || phase.type === 'day' || phase.type === 'night') {
-    for (const player of Object.values(room.players)) {
-      if (!player.isAlive && !player.isHost) {
-        await livekit.setSpectator(livekitRoomName, player.id);
+      break;
+    case 'grant_speaking':
+      await livekit.unmutePlayer(livekitRoomName, action.playerId);
+      break;
+    case 'end_speaking': {
+      // Re-mute the player who was speaking (if any)
+      const prev = room.speaking.currentSpeaker;
+      if (prev) {
+        await livekit.setSpectator(livekitRoomName, prev);
       }
+      break;
+    }
+    case 'host_eliminate':
+      await livekit.setSpectator(livekitRoomName, action.playerId);
+      break;
+    case 'reset_game':
+      await livekit.unmuteAll(livekitRoomName);
+      break;
+  }
+}
+
+// --- Sandbox handlers ---
+
+function handleCreateSandbox(ws: WebSocket, playerCount: number, settings?: Partial<import('../src/lib/game/types').RoomSettings>): void {
+  const { room, hostId, playerIds, playerNames } = createSandboxRoom(playerCount, settings);
+
+  const info: SandboxConnectionInfo = { roomCode: room.code, hostId, playerIds, viewingAs: hostId };
+  sandboxConnections.set(ws, info);
+
+  send(ws, { type: 'sandbox_created', roomCode: room.code, hostId, playerIds, playerNames });
+  sendSandboxView(ws, room.code, hostId);
+}
+
+function handleSandboxAction(ws: WebSocket, _asPlayerId: PlayerId, action: GameAction): void {
+  const sandbox = sandboxConnections.get(ws);
+  if (!sandbox) {
+    send(ws, { type: 'error', message: 'Not in a sandbox' });
+    return;
+  }
+
+  const room = getRoom(sandbox.roomCode);
+  if (!room) {
+    send(ws, { type: 'error', message: 'Room not found' });
+    return;
+  }
+
+  try {
+    const newState = transition(room, action);
+    updateRoom(sandbox.roomCode, newState);
+    sendSandboxView(ws, sandbox.roomCode, sandbox.viewingAs);
+  } catch (err) {
+    if (err instanceof InvalidActionError) {
+      send(ws, { type: 'error', message: err.message });
+    } else {
+      console.error('Sandbox action error:', err);
+      send(ws, { type: 'error', message: 'Internal error' });
     }
   }
+}
+
+function handleSetDeadView(ws: WebSocket, mode: DeadViewMode): void {
+  const info = connections.get(ws);
+  if (!info) { send(ws, { type: 'error', message: 'Not in a room' }); return; }
+
+  const room = getRoom(info.roomCode);
+  if (!room) { send(ws, { type: 'error', message: 'Room not found' }); return; }
+
+  const player = room.players[info.playerId];
+  if (!player || player.isAlive) {
+    send(ws, { type: 'error', message: 'Only dead players can change view mode' });
+    return;
+  }
+
+  room.deadViewMode[info.playerId] = mode;
+  updateRoom(info.roomCode, room);
+
+  const state = filterStateForPlayer(room, info.playerId);
+  send(ws, { type: 'state_update', state });
+}
+
+function handleSwitchView(ws: WebSocket, playerId: PlayerId): void {
+  const sandbox = sandboxConnections.get(ws);
+  if (!sandbox) { send(ws, { type: 'error', message: 'Not in a sandbox' }); return; }
+
+  sandbox.viewingAs = playerId;
+  sendSandboxView(ws, sandbox.roomCode, playerId);
+}
+
+function sendSandboxView(ws: WebSocket, roomCode: string, playerId: PlayerId): void {
+  const room = getRoom(roomCode);
+  if (!room) return;
+
+  const player = room.players[playerId];
+  const state = filterStateForPlayer(room, playerId);
+  const mediaStates = livekit.computeMediaStates(room.players, room.phase);
+
+  send(ws, {
+    type: 'sandbox_view',
+    playerId,
+    state,
+    role: player?.role ?? null,
+    mediaStates,
+  });
 }
 
 function notifyRoleAssignments(roomCode: string, room: GameRoom): void {
@@ -244,50 +316,6 @@ function notifyRoleAssignments(roomCode: string, room: GameRoom): void {
       const ws = playerSockets.get(socketKey(roomCode, player.id));
       if (ws) {
         send(ws, { type: 'role_assigned', role: player.role });
-      }
-    }
-  }
-}
-
-function notifyNightResults(roomCode: string, room: GameRoom): void {
-  const { nightActions } = room;
-
-  // Notify sheriff of their check result
-  if (nightActions.sheriffCheck && nightActions.sheriffResult !== null) {
-    const sheriff = Object.values(room.players).find(
-      (p) => p.role === 'sheriff' && p.isAlive,
-    );
-    if (sheriff) {
-      const ws = playerSockets.get(socketKey(roomCode, sheriff.id));
-      if (ws) {
-        send(ws, {
-          type: 'night_result',
-          result: {
-            type: 'sheriff_result',
-            targetId: nightActions.sheriffCheck,
-            result: nightActions.sheriffResult,
-          },
-        });
-      }
-    }
-  }
-
-  // Notify don of their check result
-  if (nightActions.donCheck && nightActions.donResult !== null) {
-    const don = Object.values(room.players).find(
-      (p) => p.role === 'don' && p.isAlive,
-    );
-    if (don) {
-      const ws = playerSockets.get(socketKey(roomCode, don.id));
-      if (ws) {
-        send(ws, {
-          type: 'night_result',
-          result: {
-            type: 'don_result',
-            targetId: nightActions.donCheck,
-            result: nightActions.donResult,
-          },
-        });
       }
     }
   }
@@ -306,37 +334,32 @@ function broadcastState(roomCode: string): void {
   }
 }
 
-function filterStateForPlayer(
-  room: GameRoom,
-  playerId: PlayerId,
-): ClientGameState {
+function filterStateForPlayer(room: GameRoom, playerId: PlayerId): ClientGameState {
   const viewer = room.players[playerId];
   const isHost = viewer?.isHost ?? false;
   const viewerRole = viewer?.role;
   const isMafiaTeam = viewerRole === 'mafia' || viewerRole === 'don';
   const isGameOver = room.phase.type === 'gameover';
+  const isDeadSpectator =
+    viewer && !viewer.isAlive && !viewer.isHost &&
+    (room.deadViewMode[playerId] ?? 'spectator') === 'spectator';
 
   const players: Record<string, ClientPlayer> = {};
   for (const [id, player] of Object.entries(room.players)) {
     let visibleRole: PlayerRole | null = null;
 
-    if (isHost || isGameOver) {
-      // Host and gameover: see all roles
+    if (isHost || isGameOver || isDeadSpectator) {
       visibleRole = player.role;
     } else if (id === playerId) {
-      // You see your own role
       visibleRole = player.role;
     } else if (isMafiaTeam && (player.role === 'mafia' || player.role === 'don')) {
-      // Mafia sees teammates
-      visibleRole = player.role;
-    } else if (!player.isAlive) {
-      // Dead players' roles are revealed
       visibleRole = player.role;
     }
 
     players[id] = {
       id: player.id,
       name: player.name,
+      seatNumber: player.seatNumber,
       role: visibleRole,
       isAlive: player.isAlive,
       isHost: player.isHost,
@@ -344,15 +367,24 @@ function filterStateForPlayer(
     };
   }
 
+  const myDeadViewMode =
+    viewer && !viewer.isAlive && !viewer.isHost
+      ? (room.deadViewMode[playerId] ?? 'spectator')
+      : undefined;
+
   return {
     code: room.code,
     hostId: room.hostId,
     players,
+    playerOrder: room.playerOrder,
     phase: room.phase,
+    round: room.round,
     speaking: room.speaking,
     vote: room.vote,
+    settings: room.settings,
     livekitRoomName: room.livekitRoomName,
     eliminationLog: room.eliminationLog,
+    myDeadViewMode,
   };
 }
 

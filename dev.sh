@@ -1,51 +1,55 @@
 #!/bin/bash
 
-# Start Next.js dev server and game WS server (+ optional ngrok)
+# Start dev server (+ optional ngrok)
 # Usage: ./dev.sh [--ngrok]
 
-PORT_NEXT=${PORT_NEXT:-3000}
-PORT_WS=${PORT_WS:-3001}
+PORT=${PORT:-3000}
 
 cleanup() {
   echo "Shutting down..."
-  kill $WS_PID $DEV_PID 2>/dev/null
+  kill $DEV_PID $NGROK_PID 2>/dev/null
   exit 0
 }
 trap cleanup SIGINT SIGTERM
 
-# Load env vars for the WS server
+# Load env vars
 set -a
 source .env.local 2>/dev/null
 set +a
 
-# Start WS game server
-echo "Starting game server on port $PORT_WS..."
-npx tsx server/index.ts &
-WS_PID=$!
-
-# Start Next.js dev server
-echo "Starting Next.js on port $PORT_NEXT..."
-npm run dev -- -p "$PORT_NEXT" &
+# Start the server (Next.js + WS on same port)
+echo "Starting server on port $PORT..."
+npm run dev &
 DEV_PID=$!
 
-# Wait for dev server to be ready
-echo "Waiting for dev server..."
-while ! curl -s "http://localhost:$PORT_NEXT" > /dev/null 2>&1; do
-  sleep 1
-done
-echo "Dev server ready!"
-
 if [ "$1" = "--ngrok" ]; then
+  # Wait for server to be ready
+  echo "Waiting for server..."
+  while ! curl -s "http://localhost:$PORT" > /dev/null 2>&1; do
+    sleep 1
+  done
+
   echo "Starting ngrok tunnel..."
-  ngrok http "$PORT_NEXT"
-else
+  ngrok http "$PORT" --config "$HOME/Library/Application Support/ngrok/ngrok.yml" &
+  NGROK_PID=$!
+
+  sleep 3
+  NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "
+import sys, json
+tunnels = json.load(sys.stdin)['tunnels']
+for t in tunnels:
+    if t['public_url'].startswith('https'):
+        print(t['public_url']); break
+" 2>/dev/null)
+
   echo ""
-  echo "App:    http://localhost:$PORT_NEXT"
-  echo "WS:     ws://localhost:$PORT_WS"
+  echo "==========================="
+  echo "Share with players: $NGROK_URL"
+  echo "==========================="
   echo ""
-  echo "Run with --ngrok to start a tunnel."
-  echo "Press Ctrl+C to stop."
-  wait
 fi
+
+echo "Press Ctrl+C to stop."
+wait
 
 cleanup

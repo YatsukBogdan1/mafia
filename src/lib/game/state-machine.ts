@@ -1,11 +1,9 @@
 import type {
   GameRoom,
   GameAction,
-  GamePhase,
   PlayerId,
 } from './types';
 import {
-  createEmptyNightActions,
   createEmptySpeakingState,
   createEmptyVoteState,
 } from './types';
@@ -28,26 +26,28 @@ export function transition(state: GameRoom, action: GameAction): GameRoom {
       return handlePlayerLeave(state, action.playerId);
     case 'start_game':
       return handleStartGame(state);
-    case 'advance_phase':
-      return handleAdvancePhase(state);
     case 'grant_speaking':
       return handleGrantSpeaking(state, action.playerId);
     case 'end_speaking':
       return handleEndSpeaking(state);
-    case 'mafia_vote':
-      return handleMafiaVote(state, action.voterId, action.targetId);
-    case 'sheriff_check':
-      return handleSheriffCheck(state, action.targetId);
-    case 'don_check':
-      return handleDonCheck(state, action.targetId);
+    case 'mute_all':
+      return handleMuteAll(state);
+    case 'unmute_all':
+      return state; // pure LiveKit side effect, no state change
     case 'nominate':
-      return handleNominate(state, action.nominatorId, action.targetId);
+      return handleNominate(state, action.targetId);
+    case 'start_nominee_vote':
+      return handleStartNomineeVote(state);
     case 'cast_vote':
-      return handleCastVote(state, action.voterId, action.targetId);
+      return handleCastVote(state, action.voterId);
     case 'host_eliminate':
       return handleHostEliminate(state, action.playerId);
     case 'host_save':
       return handleHostSave(state);
+    case 'next_round':
+      return handleNextRound(state);
+    case 'reset_game':
+      return handleResetGame(state);
     default:
       throw new InvalidActionError(`Unknown action type`);
   }
@@ -55,11 +55,7 @@ export function transition(state: GameRoom, action: GameAction): GameRoom {
 
 // --- Handlers ---
 
-function handlePlayerJoin(
-  state: GameRoom,
-  playerId: PlayerId,
-  name: string,
-): GameRoom {
+function handlePlayerJoin(state: GameRoom, playerId: PlayerId, name: string): GameRoom {
   if (state.phase.type !== 'lobby') {
     throw new InvalidActionError('Cannot join after game has started');
   }
@@ -70,6 +66,7 @@ function handlePlayerJoin(
       [playerId]: {
         id: playerId,
         name,
+        seatNumber: null,
         role: null,
         isAlive: true,
         isHost: false,
@@ -82,7 +79,6 @@ function handlePlayerJoin(
 function handlePlayerLeave(state: GameRoom, playerId: PlayerId): GameRoom {
   const player = state.players[playerId];
   if (!player) throw new InvalidActionError('Player not found');
-
   return {
     ...state,
     players: {
@@ -109,226 +105,51 @@ function handleStartGame(state: GameRoom): GameRoom {
   for (const [id, role] of Object.entries(roleAssignments)) {
     players[id] = { ...players[id], role };
   }
+  for (let i = 0; i < playerIds.length; i++) {
+    players[playerIds[i]] = { ...players[playerIds[i]], seatNumber: i + 1 };
+  }
 
   return {
     ...state,
     players,
-    phase: { type: 'night', subphase: 'mafia_deliberation', nightNumber: 1 },
-    nightActions: createEmptyNightActions(),
+    playerOrder: playerIds,
+    phase: { type: 'game' },
+    speaking: createEmptySpeakingState(),
+    vote: createEmptyVoteState(),
   };
 }
 
-function handleAdvancePhase(state: GameRoom): GameRoom {
-  const { phase } = state;
 
-  if (phase.type === 'lobby' || phase.type === 'gameover') {
-    throw new InvalidActionError(`Cannot advance from ${phase.type}`);
-  }
-
-  const nextPhase = getNextPhase(phase, state);
-  let newState = {
-    ...state,
-    phase: nextPhase,
-  };
-
-  // Reset state for new phases
-  if (nextPhase.type === 'night') {
-    newState.nightActions = createEmptyNightActions();
-    newState.speaking = createEmptySpeakingState();
-    newState.vote = createEmptyVoteState();
-  } else if (
-    nextPhase.type === 'day' &&
-    nextPhase.subphase === 'discussion'
-  ) {
-    const alivePlayers = getAlivePlayers(newState);
-    newState.speaking = {
-      currentSpeaker: null,
-      speakingOrder: alivePlayers.map((p) => p.id),
-      speakingIndex: 0,
-    };
-  } else if (nextPhase.type === 'day' && nextPhase.subphase === 'voting') {
-    newState.vote = createEmptyVoteState();
-  }
-
-  return newState;
-}
-
-function getNextPhase(phase: GamePhase, state: GameRoom): GamePhase {
-  if (phase.type === 'night') {
-    switch (phase.subphase) {
-      case 'mafia_deliberation': {
-        // Skip don_check if no don alive
-        const hasDon = getAlivePlayers(state).some((p) => p.role === 'don');
-        if (hasDon) return { ...phase, subphase: 'don_check' };
-        const hasSheriff = getAlivePlayers(state).some(
-          (p) => p.role === 'sheriff',
-        );
-        if (hasSheriff) return { ...phase, subphase: 'sheriff_check' };
-        return {
-          type: 'day',
-          subphase: 'announcement',
-          dayNumber: phase.nightNumber,
-        };
-      }
-      case 'don_check': {
-        const hasSheriff = getAlivePlayers(state).some(
-          (p) => p.role === 'sheriff',
-        );
-        if (hasSheriff) return { ...phase, subphase: 'sheriff_check' };
-        return {
-          type: 'day',
-          subphase: 'announcement',
-          dayNumber: phase.nightNumber,
-        };
-      }
-      case 'sheriff_check':
-        return {
-          type: 'day',
-          subphase: 'announcement',
-          dayNumber: phase.nightNumber,
-        };
-    }
-  }
-
-  if (phase.type === 'day') {
-    switch (phase.subphase) {
-      case 'announcement':
-        return { ...phase, subphase: 'discussion' };
-      case 'discussion':
-        return { ...phase, subphase: 'voting' };
-      case 'voting':
-        return { ...phase, subphase: 'defense' };
-      case 'defense':
-        return { ...phase, subphase: 'final_vote' };
-      case 'final_vote':
-        return {
-          type: 'night',
-          subphase: 'mafia_deliberation',
-          nightNumber: phase.dayNumber + 1,
-        };
-    }
-  }
-
-  throw new InvalidActionError('Cannot determine next phase');
-}
-
-function handleGrantSpeaking(
-  state: GameRoom,
-  playerId: PlayerId,
-): GameRoom {
-  assertPhase(state, 'day');
+function handleGrantSpeaking(state: GameRoom, playerId: PlayerId): GameRoom {
   const player = state.players[playerId];
   if (!player || !player.isAlive) {
     throw new InvalidActionError('Player not found or dead');
   }
-
   return {
     ...state,
-    speaking: {
-      ...state.speaking,
-      currentSpeaker: playerId,
-    },
+    speaking: { currentSpeaker: playerId },
   };
 }
 
 function handleEndSpeaking(state: GameRoom): GameRoom {
-  assertPhase(state, 'day');
   return {
     ...state,
-    speaking: {
-      ...state.speaking,
-      currentSpeaker: null,
-      speakingIndex: state.speaking.speakingIndex + 1,
-    },
+    speaking: { currentSpeaker: null },
   };
 }
 
-function handleMafiaVote(
-  state: GameRoom,
-  voterId: PlayerId,
-  targetId: PlayerId,
-): GameRoom {
-  assertNightSubphase(state, 'mafia_deliberation');
-  const voter = state.players[voterId];
-  if (
-    !voter ||
-    !voter.isAlive ||
-    (voter.role !== 'mafia' && voter.role !== 'don')
-  ) {
-    throw new InvalidActionError('Only alive mafia members can vote');
-  }
+function handleMuteAll(state: GameRoom): GameRoom {
+  // Clear current speaker when muting all; LiveKit side effect handled in controller
+  return {
+    ...state,
+    speaking: { currentSpeaker: null },
+  };
+}
 
+function handleNominate(state: GameRoom, targetId: PlayerId): GameRoom {
   const target = state.players[targetId];
   if (!target || !target.isAlive || target.isHost) {
-    throw new InvalidActionError('Invalid target');
-  }
-
-  const mafiaVotes = { ...state.nightActions.mafiaVotes, [voterId]: targetId };
-
-  // Resolve mafia target (majority of mafia votes)
-  const mafiaAlive = getAlivePlayers(state).filter(
-    (p) => p.role === 'mafia' || p.role === 'don',
-  );
-  const mafiaTarget = resolveMafiaTarget(mafiaVotes, mafiaAlive.length);
-
-  return {
-    ...state,
-    nightActions: {
-      ...state.nightActions,
-      mafiaVotes,
-      mafiaTarget,
-    },
-  };
-}
-
-function handleSheriffCheck(state: GameRoom, targetId: PlayerId): GameRoom {
-  assertNightSubphase(state, 'sheriff_check');
-  const target = state.players[targetId];
-  if (!target || !target.isAlive || target.isHost) {
-    throw new InvalidActionError('Invalid target');
-  }
-
-  const isMafia = target.role === 'mafia' || target.role === 'don';
-
-  return {
-    ...state,
-    nightActions: {
-      ...state.nightActions,
-      sheriffCheck: targetId,
-      sheriffResult: isMafia,
-    },
-  };
-}
-
-function handleDonCheck(state: GameRoom, targetId: PlayerId): GameRoom {
-  assertNightSubphase(state, 'don_check');
-  const target = state.players[targetId];
-  if (!target || !target.isAlive || target.isHost) {
-    throw new InvalidActionError('Invalid target');
-  }
-
-  const isSheriff = target.role === 'sheriff';
-
-  return {
-    ...state,
-    nightActions: {
-      ...state.nightActions,
-      donCheck: targetId,
-      donResult: isSheriff,
-    },
-  };
-}
-
-function handleNominate(
-  state: GameRoom,
-  nominatorId: PlayerId,
-  targetId: PlayerId,
-): GameRoom {
-  assertDaySubphase(state, 'voting');
-  const nominator = state.players[nominatorId];
-  const target = state.players[targetId];
-  if (!nominator?.isAlive || !target?.isAlive) {
-    throw new InvalidActionError('Both players must be alive');
+    throw new InvalidActionError('Invalid nomination target');
   }
   if (state.vote.nominees.includes(targetId)) {
     throw new InvalidActionError('Player already nominated');
@@ -339,36 +160,84 @@ function handleNominate(
     vote: {
       ...state.vote,
       nominees: [...state.vote.nominees, targetId],
-      votingOpen: true,
     },
   };
 }
 
-function handleCastVote(
-  state: GameRoom,
-  voterId: PlayerId,
-  targetId: PlayerId,
-): GameRoom {
-  if (
-    state.phase.type !== 'day' ||
-    (state.phase.subphase !== 'voting' && state.phase.subphase !== 'final_vote')
-  ) {
-    throw new InvalidActionError('Voting not active');
+function handleStartNomineeVote(state: GameRoom): GameRoom {
+  const { vote } = state;
+
+  if (vote.nominees.length === 0) {
+    throw new InvalidActionError('No nominees to vote on');
   }
 
-  const voter = state.players[voterId];
-  if (!voter?.isAlive) {
-    throw new InvalidActionError('Dead players cannot vote');
-  }
-  if (!state.vote.nominees.includes(targetId)) {
-    throw new InvalidActionError('Target not nominated');
+  const nextIndex = vote.currentNomineeIndex + 1;
+
+  if (nextIndex >= vote.nominees.length) {
+    return finalizeVoting(state);
   }
 
   return {
     ...state,
     vote: {
       ...state.vote,
-      votes: { ...state.vote.votes, [voterId]: targetId },
+      currentNomineeIndex: nextIndex,
+      votingDeadline: Date.now() + 3000,
+    },
+  };
+}
+
+function handleCastVote(state: GameRoom, voterId: PlayerId): GameRoom {
+  const { vote } = state;
+
+  if (vote.currentNomineeIndex < 0 || vote.finished) {
+    throw new InvalidActionError('Voting not active');
+  }
+
+  const voter = state.players[voterId];
+  if (!voter?.isAlive || voter.isHost) {
+    throw new InvalidActionError('Cannot vote');
+  }
+  if (vote.usedVotes.includes(voterId)) {
+    throw new InvalidActionError('Already used your vote');
+  }
+  if (vote.votingDeadline && Date.now() > vote.votingDeadline) {
+    throw new InvalidActionError('Voting window closed');
+  }
+
+  const currentNominee = vote.nominees[vote.currentNomineeIndex];
+
+  return {
+    ...state,
+    vote: {
+      ...state.vote,
+      votes: { ...vote.votes, [voterId]: currentNominee },
+      usedVotes: [...vote.usedVotes, voterId],
+    },
+  };
+}
+
+function finalizeVoting(state: GameRoom): GameRoom {
+  const { vote } = state;
+  const lastNominee = vote.nominees[vote.nominees.length - 1];
+  const newVotes = { ...vote.votes };
+
+  const alivePlayers = getAlivePlayers(state);
+  for (const player of alivePlayers) {
+    if (!vote.usedVotes.includes(player.id)) {
+      newVotes[player.id] = lastNominee;
+    }
+  }
+
+  return {
+    ...state,
+    vote: {
+      ...state.vote,
+      votes: newVotes,
+      usedVotes: alivePlayers.map((p) => p.id),
+      currentNomineeIndex: vote.nominees.length - 1,
+      votingDeadline: null,
+      finished: true,
     },
   };
 }
@@ -379,29 +248,16 @@ function handleHostEliminate(state: GameRoom, playerId: PlayerId): GameRoom {
     throw new InvalidActionError('Player not found or already dead');
   }
 
-  const round =
-    state.phase.type === 'night'
-      ? (state.phase as { nightNumber: number }).nightNumber
-      : state.phase.type === 'day'
-        ? (state.phase as { dayNumber: number }).dayNumber
-        : 0;
-
-  const phaseType =
-    state.phase.type === 'night' ? 'night' : 'day';
-
   let newState: GameRoom = {
     ...state,
     players: {
       ...state.players,
       [playerId]: { ...player, isAlive: false },
     },
-    eliminationLog: [
-      ...state.eliminationLog,
-      { playerId, phase: phaseType as 'night' | 'day', round },
-    ],
+    eliminationLog: [...state.eliminationLog, { playerId }],
+    vote: createEmptyVoteState(),
   };
 
-  // Check win condition
   const winner = checkWinCondition(newState.players);
   if (winner) {
     newState = { ...newState, phase: { type: 'gameover', winner } };
@@ -411,10 +267,44 @@ function handleHostEliminate(state: GameRoom, playerId: PlayerId): GameRoom {
 }
 
 function handleHostSave(state: GameRoom): GameRoom {
-  // Host decides not to eliminate — just reset vote state
   return {
     ...state,
     vote: createEmptyVoteState(),
+  };
+}
+
+function handleResetGame(state: GameRoom): GameRoom {
+  if (state.phase.type !== 'gameover') {
+    throw new InvalidActionError('Game is not over');
+  }
+
+  const players = { ...state.players };
+  for (const [id, player] of Object.entries(players)) {
+    players[id] = { ...player, role: null, seatNumber: null, isAlive: true };
+  }
+
+  return {
+    ...state,
+    players,
+    playerOrder: [],
+    phase: { type: 'lobby' },
+    round: 1,
+    speaking: createEmptySpeakingState(),
+    vote: createEmptyVoteState(),
+    deadViewMode: {},
+    eliminationLog: [],
+  };
+}
+
+function handleNextRound(state: GameRoom): GameRoom {
+  if (state.phase.type !== 'game') {
+    throw new InvalidActionError('Can only advance round during game');
+  }
+  return {
+    ...state,
+    round: state.round + 1,
+    vote: createEmptyVoteState(),
+    speaking: createEmptySpeakingState(),
   };
 }
 
@@ -422,40 +312,4 @@ function handleHostSave(state: GameRoom): GameRoom {
 
 function getAlivePlayers(state: GameRoom) {
   return Object.values(state.players).filter((p) => p.isAlive && !p.isHost);
-}
-
-function assertPhase(state: GameRoom, type: string) {
-  if (state.phase.type !== type) {
-    throw new InvalidActionError(`Expected ${type} phase, got ${state.phase.type}`);
-  }
-}
-
-function assertNightSubphase(state: GameRoom, subphase: string) {
-  if (state.phase.type !== 'night' || state.phase.subphase !== subphase) {
-    throw new InvalidActionError(`Expected night/${subphase}`);
-  }
-}
-
-function assertDaySubphase(state: GameRoom, subphase: string) {
-  if (state.phase.type !== 'day' || state.phase.subphase !== subphase) {
-    throw new InvalidActionError(`Expected day/${subphase}`);
-  }
-}
-
-function resolveMafiaTarget(
-  votes: Record<PlayerId, PlayerId>,
-  totalMafia: number,
-): PlayerId | null {
-  const voteCounts: Record<PlayerId, number> = {};
-  for (const target of Object.values(votes)) {
-    voteCounts[target] = (voteCounts[target] || 0) + 1;
-  }
-
-  // Need majority
-  const majority = Math.ceil(totalMafia / 2);
-  for (const [target, count] of Object.entries(voteCounts)) {
-    if (count >= majority) return target;
-  }
-
-  return null;
 }

@@ -5,10 +5,28 @@ import type {
   C2SMessage,
   S2CMessage,
   ClientGameState,
+  DeadViewMode,
   GameAction,
   PlayerRole,
-  NightResult,
 } from '@/lib/game/types';
+
+const SESSION_KEY = 'mafia_session';
+
+interface SessionInfo {
+  roomCode: string;
+  playerId: string;
+}
+
+function saveSession(info: SessionInfo) {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(info)); } catch {}
+}
+
+function loadSession(): SessionInfo | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
 
 interface UseGameSocketOptions {
   url: string;
@@ -20,13 +38,12 @@ interface UseGameSocketReturn {
   myPlayerId: string | null;
   myRole: PlayerRole | null;
   roomCode: string | null;
-  nightResult: NightResult | null;
   error: string | null;
   createRoom: (playerName: string) => void;
   joinRoom: (roomCode: string, playerName: string) => void;
   sendHostAction: (action: GameAction) => void;
   sendPlayerAction: (action: GameAction) => void;
-  clearNightResult: () => void;
+  setDeadViewMode: (mode: DeadViewMode) => void;
 }
 
 export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketReturn {
@@ -36,11 +53,11 @@ export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketRetur
   const [myPlayerId, setMyPlayerId] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<PlayerRole | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(null);
-  const [nightResult, setNightResult] = useState<NightResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const reconnectAttempts = useRef(0);
+  const hasTriedReconnect = useRef(false);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -52,6 +69,18 @@ export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketRetur
       setIsConnected(true);
       setError(null);
       reconnectAttempts.current = 0;
+
+      if (!hasTriedReconnect.current) {
+        hasTriedReconnect.current = true;
+        const session = loadSession();
+        if (session) {
+          ws.send(JSON.stringify({
+            type: 'reconnect',
+            roomCode: session.roomCode,
+            playerId: session.playerId,
+          }));
+        }
+      }
     };
 
     ws.onmessage = (event) => {
@@ -60,19 +89,24 @@ export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketRetur
         case 'room_created':
           setMyPlayerId(msg.playerId);
           setRoomCode(msg.roomCode);
+          saveSession({ roomCode: msg.roomCode, playerId: msg.playerId });
           break;
         case 'room_joined':
           setMyPlayerId(msg.playerId);
           setRoomCode(msg.roomCode);
+          saveSession({ roomCode: msg.roomCode, playerId: msg.playerId });
+          break;
+        case 'reconnected':
+          setMyPlayerId(msg.playerId);
+          setRoomCode(msg.roomCode);
+          if (msg.role) setMyRole(msg.role);
+          saveSession({ roomCode: msg.roomCode, playerId: msg.playerId });
           break;
         case 'state_update':
           setGameState(msg.state);
           break;
         case 'role_assigned':
           setMyRole(msg.role);
-          break;
-        case 'night_result':
-          setNightResult(msg.result);
           break;
         case 'error':
           setError(msg.message);
@@ -84,15 +118,13 @@ export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketRetur
 
     ws.onclose = () => {
       setIsConnected(false);
-      // Reconnect with exponential backoff
+      hasTriedReconnect.current = false;
       const delay = Math.min(1000 * 2 ** reconnectAttempts.current, 10000);
       reconnectAttempts.current++;
       reconnectTimeoutRef.current = setTimeout(connect, delay);
     };
 
-    ws.onerror = () => {
-      ws.close();
-    };
+    ws.onerror = () => { ws.close(); };
   }, [url]);
 
   useEffect(() => {
@@ -103,13 +135,13 @@ export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketRetur
     };
   }, [connect]);
 
-  // Ping to keep connection alive
+  // Ping to keep connection alive (10s to beat any proxy idle timeout)
   useEffect(() => {
     const interval = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'ping' }));
       }
-    }, 30000);
+    }, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -120,36 +152,29 @@ export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketRetur
   }, []);
 
   const createRoom = useCallback(
-    (playerName: string) => {
-      sendMessage({ type: 'create_room', playerName });
-    },
+    (playerName: string) => sendMessage({ type: 'create_room', playerName }),
     [sendMessage],
   );
 
   const joinRoom = useCallback(
-    (code: string, playerName: string) => {
-      sendMessage({ type: 'join_room', roomCode: code, playerName });
-    },
+    (code: string, playerName: string) => sendMessage({ type: 'join_room', roomCode: code, playerName }),
     [sendMessage],
   );
 
   const sendHostAction = useCallback(
-    (action: GameAction) => {
-      sendMessage({ type: 'host_action', action });
-    },
+    (action: GameAction) => sendMessage({ type: 'host_action', action }),
     [sendMessage],
   );
 
   const sendPlayerAction = useCallback(
-    (action: GameAction) => {
-      sendMessage({ type: 'player_action', action });
-    },
+    (action: GameAction) => sendMessage({ type: 'player_action', action }),
     [sendMessage],
   );
 
-  const clearNightResult = useCallback(() => {
-    setNightResult(null);
-  }, []);
+  const setDeadViewMode = useCallback(
+    (mode: DeadViewMode) => sendMessage({ type: 'set_dead_view', mode }),
+    [sendMessage],
+  );
 
   return {
     isConnected,
@@ -157,12 +182,11 @@ export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketRetur
     myPlayerId,
     myRole,
     roomCode,
-    nightResult,
     error,
     createRoom,
     joinRoom,
     sendHostAction,
     sendPlayerAction,
-    clearNightResult,
+    setDeadViewMode,
   };
 }

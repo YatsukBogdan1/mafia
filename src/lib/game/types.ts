@@ -8,70 +8,56 @@ export type PlayerRole = 'mafia' | 'don' | 'sheriff' | 'villager';
 // --- Game Phases ---
 export type GamePhase =
   | { type: 'lobby' }
-  | { type: 'night'; subphase: NightSubphase; nightNumber: number }
-  | { type: 'day'; subphase: DaySubphase; dayNumber: number }
+  | { type: 'game' }
   | { type: 'gameover'; winner: 'mafia' | 'villagers' };
-
-export type NightSubphase =
-  | 'mafia_deliberation'
-  | 'don_check'
-  | 'sheriff_check';
-
-export type DaySubphase =
-  | 'announcement'
-  | 'discussion'
-  | 'voting'
-  | 'defense'
-  | 'final_vote';
 
 // --- Player ---
 export interface Player {
   id: PlayerId;
   name: string;
+  seatNumber: number | null;
   role: PlayerRole | null;
   isAlive: boolean;
   isHost: boolean;
   isConnected: boolean;
 }
 
-// --- Speaking ---
+// --- Speaking (tracks who currently has mic permission) ---
 export interface SpeakingState {
   currentSpeaker: PlayerId | null;
-  speakingOrder: PlayerId[];
-  speakingIndex: number;
 }
 
 // --- Voting ---
 export interface VoteState {
   nominees: PlayerId[];
-  votes: Record<PlayerId, PlayerId>;
-  votingOpen: boolean;
+  currentNomineeIndex: number;       // -1 = not started, 0..n = active
+  votingDeadline: number | null;     // epoch ms when 3s window closes
+  votes: Record<PlayerId, PlayerId>; // voterId -> nomineeId
+  usedVotes: PlayerId[];
+  finished: boolean;
 }
 
-// --- Night Actions ---
-export interface NightActions {
-  mafiaTarget: PlayerId | null;
-  mafiaVotes: Record<PlayerId, PlayerId>;
-  sheriffCheck: PlayerId | null;
-  sheriffResult: boolean | null;
-  donCheck: PlayerId | null;
-  donResult: boolean | null;
-}
+// --- Room Settings ---
+export interface RoomSettings {}
+
+export const DEFAULT_ROOM_SETTINGS: RoomSettings = {};
+
+// --- Dead player view mode ---
+export type DeadViewMode = 'spectator' | 'role';
 
 // --- Room (full server-side state) ---
 export interface GameRoom {
   code: RoomCode;
   hostId: PlayerId;
   players: Record<PlayerId, Player>;
+  playerOrder: PlayerId[];
   phase: GamePhase;
+  round: number;                     // increments each time host clicks Next Round
   speaking: SpeakingState;
   vote: VoteState;
-  nightActions: NightActions;
-  eliminationLog: Array<{
-    playerId: PlayerId;
-    phase: 'night' | 'day';
-    round: number;
-  }>;
+  settings: RoomSettings;
+  deadViewMode: Record<PlayerId, DeadViewMode>;
+  eliminationLog: Array<{ playerId: PlayerId }>;
   livekitRoomName: string;
 }
 
@@ -80,32 +66,40 @@ export type GameAction =
   | { type: 'player_join'; playerId: PlayerId; name: string }
   | { type: 'player_leave'; playerId: PlayerId }
   | { type: 'start_game' }
-  | { type: 'advance_phase' }
-  | { type: 'grant_speaking'; playerId: PlayerId }
-  | { type: 'end_speaking' }
-  | { type: 'mafia_vote'; voterId: PlayerId; targetId: PlayerId }
-  | { type: 'sheriff_check'; targetId: PlayerId }
-  | { type: 'don_check'; targetId: PlayerId }
-  | { type: 'nominate'; nominatorId: PlayerId; targetId: PlayerId }
-  | { type: 'cast_vote'; voterId: PlayerId; targetId: PlayerId }
+  | { type: 'grant_speaking'; playerId: PlayerId }     // unmute a player
+  | { type: 'end_speaking' }                           // clear current speaker
+  | { type: 'mute_all' }                               // mute everyone (LiveKit side effect)
+  | { type: 'unmute_all' }                             // unmute everyone (LiveKit side effect)
+  | { type: 'nominate'; targetId: PlayerId }           // host adds nominee
+  | { type: 'start_nominee_vote' }                     // host starts vote on next nominee
+  | { type: 'cast_vote'; voterId: PlayerId }
   | { type: 'host_eliminate'; playerId: PlayerId }
-  | { type: 'host_save' };
+  | { type: 'host_save' }
+  | { type: 'next_round' }
+  | { type: 'reset_game' };
 
 // --- Client-to-Server Messages ---
 export type C2SMessage =
-  | { type: 'create_room'; playerName: string }
+  | { type: 'create_room'; playerName: string; settings?: Partial<RoomSettings> }
   | { type: 'join_room'; roomCode: RoomCode; playerName: string }
+  | { type: 'reconnect'; roomCode: RoomCode; playerId: PlayerId }
   | { type: 'host_action'; action: GameAction }
   | { type: 'player_action'; action: GameAction }
+  | { type: 'create_sandbox'; playerCount: number; settings?: Partial<RoomSettings> }
+  | { type: 'sandbox_action'; asPlayerId: PlayerId; action: GameAction }
+  | { type: 'switch_view'; playerId: PlayerId }
+  | { type: 'set_dead_view'; mode: DeadViewMode }
   | { type: 'ping' };
 
 // --- Server-to-Client Messages ---
 export type S2CMessage =
   | { type: 'room_created'; roomCode: RoomCode; playerId: PlayerId }
   | { type: 'room_joined'; playerId: PlayerId; roomCode: RoomCode }
+  | { type: 'reconnected'; playerId: PlayerId; roomCode: RoomCode; role: PlayerRole | null }
   | { type: 'state_update'; state: ClientGameState }
   | { type: 'role_assigned'; role: PlayerRole }
-  | { type: 'night_result'; result: NightResult }
+  | { type: 'sandbox_created'; roomCode: RoomCode; hostId: PlayerId; playerIds: PlayerId[]; playerNames: Record<PlayerId, string> }
+  | { type: 'sandbox_view'; playerId: PlayerId; state: ClientGameState; role: PlayerRole | null; mediaStates: Record<PlayerId, { canPublish: boolean; canSee: PlayerId[] }> }
   | { type: 'error'; message: string }
   | { type: 'pong' };
 
@@ -113,7 +107,8 @@ export type S2CMessage =
 export interface ClientPlayer {
   id: PlayerId;
   name: string;
-  role: PlayerRole | null; // null unless revealed (death, gameover, or teammate)
+  seatNumber: number | null;
+  role: PlayerRole | null;
   isAlive: boolean;
   isHost: boolean;
   isConnected: boolean;
@@ -123,43 +118,29 @@ export interface ClientGameState {
   code: RoomCode;
   hostId: PlayerId;
   players: Record<PlayerId, ClientPlayer>;
+  playerOrder: PlayerId[];
   phase: GamePhase;
+  round: number;
   speaking: SpeakingState;
   vote: VoteState;
+  settings: RoomSettings;
   livekitRoomName: string;
   eliminationLog: GameRoom['eliminationLog'];
-}
-
-export interface NightResult {
-  type: 'sheriff_result' | 'don_result' | 'mafia_kill';
-  targetId: PlayerId;
-  result?: boolean; // for sheriff/don checks
+  myDeadViewMode?: DeadViewMode;
 }
 
 // --- Helpers ---
-export function createEmptyNightActions(): NightActions {
-  return {
-    mafiaTarget: null,
-    mafiaVotes: {},
-    sheriffCheck: null,
-    sheriffResult: null,
-    donCheck: null,
-    donResult: null,
-  };
-}
-
 export function createEmptySpeakingState(): SpeakingState {
-  return {
-    currentSpeaker: null,
-    speakingOrder: [],
-    speakingIndex: 0,
-  };
+  return { currentSpeaker: null };
 }
 
 export function createEmptyVoteState(): VoteState {
   return {
     nominees: [],
+    currentNomineeIndex: -1,
+    votingDeadline: null,
     votes: {},
-    votingOpen: false,
+    usedVotes: [],
+    finished: false,
   };
 }

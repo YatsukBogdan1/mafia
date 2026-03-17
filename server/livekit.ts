@@ -1,5 +1,12 @@
-import { RoomServiceClient } from 'livekit-server-sdk';
+import { RoomServiceClient, TrackSource } from 'livekit-server-sdk';
 import type { PlayerId, Player, GamePhase } from '../src/lib/game/types';
+
+// Permissions for a "muted" participant: camera on, microphone blocked
+const CAMERA_ONLY = { canPublish: true, canSubscribe: true, canPublishData: true, canPublishSources: [TrackSource.CAMERA] };
+// Permissions for a fully unmuted participant
+const FULL_PUBLISH = { canPublish: true, canSubscribe: true, canPublishData: true, canPublishSources: [] };
+// Permissions for a dead player: no publishing at all
+const NO_PUBLISH = { canPublish: false, canSubscribe: true, canPublishData: false, canPublishSources: [] };
 
 const apiKey = process.env.LIVEKIT_API_KEY || '';
 const apiSecret = process.env.LIVEKIT_API_SECRET || '';
@@ -15,42 +22,15 @@ function getClient(): RoomServiceClient {
   return client;
 }
 
-export async function muteAllExceptSpeaker(
-  roomName: string,
-  speakerId: PlayerId,
-  hostId: PlayerId,
-): Promise<void> {
+export async function muteAll(roomName: string, hostId: PlayerId): Promise<void> {
   const svc = getClient();
   try {
     const participants = await svc.listParticipants(roomName);
     for (const p of participants) {
-      const canPublish =
-        p.identity === speakerId || p.identity === hostId;
-      await svc.updateParticipant(roomName, p.identity, undefined, {
-        canPublish,
-        canSubscribe: true,
-        canPublishData: true,
-      });
-    }
-  } catch (err) {
-    console.error('Failed to update mute state:', err);
-  }
-}
-
-export async function muteAll(
-  roomName: string,
-  hostId: PlayerId,
-): Promise<void> {
-  const svc = getClient();
-  try {
-    const participants = await svc.listParticipants(roomName);
-    for (const p of participants) {
-      const canPublish = p.identity === hostId;
-      await svc.updateParticipant(roomName, p.identity, undefined, {
-        canPublish,
-        canSubscribe: true,
-        canPublishData: true,
-      });
+      // Host keeps full publish; everyone else: camera only (mic blocked)
+      await svc.updateParticipant(roomName, p.identity, undefined,
+        p.identity === hostId ? FULL_PUBLISH : CAMERA_ONLY,
+      );
     }
   } catch (err) {
     console.error('Failed to mute all:', err);
@@ -62,110 +42,68 @@ export async function unmuteAll(roomName: string): Promise<void> {
   try {
     const participants = await svc.listParticipants(roomName);
     for (const p of participants) {
-      await svc.updateParticipant(roomName, p.identity, undefined, {
-        canPublish: true,
-        canSubscribe: true,
-        canPublishData: true,
-      });
+      await svc.updateParticipant(roomName, p.identity, undefined, FULL_PUBLISH);
     }
   } catch (err) {
     console.error('Failed to unmute all:', err);
   }
 }
 
-export async function setSpectator(
-  roomName: string,
-  playerId: PlayerId,
-): Promise<void> {
+export async function unmutePlayer(roomName: string, playerId: PlayerId): Promise<void> {
   const svc = getClient();
   try {
-    await svc.updateParticipant(roomName, playerId, undefined, {
-      canPublish: false,
-      canSubscribe: true,
-      canPublishData: true,
-    });
+    await svc.updateParticipant(roomName, playerId, undefined, FULL_PUBLISH);
+  } catch (err) {
+    console.error('Failed to unmute player:', err);
+  }
+}
+
+export async function setSpectator(roomName: string, playerId: PlayerId): Promise<void> {
+  const svc = getClient();
+  try {
+    // Dead players: no camera or mic
+    await svc.updateParticipant(roomName, playerId, undefined, NO_PUBLISH);
   } catch (err) {
     console.error('Failed to set spectator:', err);
   }
 }
 
 /**
- * Controls which video/audio tracks each participant can see.
- *
- * Night phase: villagers/sheriff only see host. Mafia see host + mafia team.
- * Day/lobby/gameover: everyone sees everyone.
+ * Pure computation of what each player can see/hear.
+ * Used by sandbox for display.
+ * With no subphases, everyone sees everyone except dead players (non-host).
  */
-export async function updateVisibility(
-  roomName: string,
+export interface PlayerMediaState {
+  canPublish: boolean;
+  canSee: PlayerId[];
+}
+
+export function computeMediaStates(
   players: Record<PlayerId, Player>,
-  hostId: PlayerId,
   phase: GamePhase,
-): Promise<void> {
-  const svc = getClient();
-  try {
-    const participants = await svc.listParticipants(roomName);
+): Record<PlayerId, PlayerMediaState> {
+  const result: Record<PlayerId, PlayerMediaState> = {};
+  const allIds = Object.keys(players);
 
-    // Build a map of identity -> published track SIDs
-    const tracksByIdentity = new Map<string, string[]>();
-    for (const p of participants) {
-      const sids = p.tracks.map((t) => t.sid);
-      tracksByIdentity.set(p.identity, sids);
-    }
+  const deadIds = new Set(
+    Object.values(players)
+      .filter((p) => !p.isAlive && !p.isHost)
+      .map((p) => p.id),
+  );
 
-    // All track SIDs in the room
-    const allTrackSids = participants.flatMap((p) => p.tracks.map((t) => t.sid));
-    if (allTrackSids.length === 0) return;
+  for (const [id, player] of Object.entries(players)) {
+    // canPublish: dead non-host players can't publish
+    const canPublish = player.isAlive || player.isHost;
 
-    const isNight = phase.type === 'night';
+    // canSee: everyone sees everyone except dead players (only host sees dead)
+    const canSee = player.isHost || phase.type === 'gameover'
+      ? allIds
+      : allIds.filter((pid) => !deadIds.has(pid));
+    void phase; // used above
 
-    for (const p of participants) {
-      const player = players[p.identity];
-      if (!player) continue;
-
-      if (isNight && !player.isHost) {
-        const isMafiaTeam =
-          player.role === 'mafia' || player.role === 'don';
-
-        // Tracks this participant SHOULD see
-        const allowedTrackSids: string[] = [];
-
-        // Everyone sees host during night
-        const hostTracks = tracksByIdentity.get(hostId) || [];
-        allowedTrackSids.push(...hostTracks);
-
-        if (isMafiaTeam) {
-          // Mafia sees other mafia members
-          for (const [identity, sids] of tracksByIdentity) {
-            const other = players[identity];
-            if (
-              other &&
-              !other.isHost &&
-              (other.role === 'mafia' || other.role === 'don')
-            ) {
-              allowedTrackSids.push(...sids);
-            }
-          }
-        }
-
-        // Unsubscribe from tracks they shouldn't see
-        const blockedSids = allTrackSids.filter(
-          (sid) => !allowedTrackSids.includes(sid),
-        );
-        if (blockedSids.length > 0) {
-          await svc.updateSubscriptions(roomName, p.identity, blockedSids, false);
-        }
-        // Subscribe to allowed tracks
-        if (allowedTrackSids.length > 0) {
-          await svc.updateSubscriptions(roomName, p.identity, allowedTrackSids, true);
-        }
-      } else {
-        // Day / lobby / gameover / host: subscribe to everything
-        if (allTrackSids.length > 0) {
-          await svc.updateSubscriptions(roomName, p.identity, allTrackSids, true);
-        }
-      }
-    }
-  } catch (err) {
-    console.error('Failed to update visibility:', err);
+    void id; // suppress unused warning
+    result[id] = { canPublish, canSee };
   }
+
+  return result;
 }
