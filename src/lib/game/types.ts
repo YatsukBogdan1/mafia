@@ -35,6 +35,8 @@ export interface VoteState {
   votes: Record<PlayerId, PlayerId>; // voterId -> nomineeId
   usedVotes: PlayerId[];
   finished: boolean;
+  revoteRound: number;               // 0 = first vote, 1 = first revote
+  eliminateAllIds: PlayerId[];       // non-empty = "eliminate all" vote in progress for these players
 }
 
 // --- Room Settings ---
@@ -76,7 +78,9 @@ export type GameAction =
   | { type: 'host_eliminate'; playerId: PlayerId }
   | { type: 'host_save' }
   | { type: 'next_round' }
-  | { type: 'reset_game' };
+  | { type: 'reset_game' }
+  | { type: 'revote'; tiedIds: PlayerId[] }
+  | { type: 'vote_eliminate_all'; tiedIds: PlayerId[] };
 
 // --- Client-to-Server Messages ---
 export type C2SMessage =
@@ -142,5 +146,7 @@ export function createEmptyVoteState(): VoteState {
     votes: {},
     usedVotes: [],
     finished: false,
+    revoteRound: 0,
+    eliminateAllIds: [],
   };
 }

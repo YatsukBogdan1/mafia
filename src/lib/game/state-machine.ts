@@ -48,6 +48,10 @@ export function transition(state: GameRoom, action: GameAction): GameRoom {
       return handleNextRound(state);
     case 'reset_game':
       return handleResetGame(state);
+    case 'revote':
+      return handleRevote(state, action.tiedIds);
+    case 'vote_eliminate_all':
+      return handleVoteEliminateAll(state, action.tiedIds);
     default:
       throw new InvalidActionError(`Unknown action type`);
   }
@@ -182,7 +186,7 @@ function handleStartNomineeVote(state: GameRoom): GameRoom {
     vote: {
       ...state.vote,
       currentNomineeIndex: nextIndex,
-      votingDeadline: Date.now() + 3000,
+      votingDeadline: Date.now() + 10000,
     },
   };
 }
@@ -219,6 +223,20 @@ function handleCastVote(state: GameRoom, voterId: PlayerId): GameRoom {
 
 function finalizeVoting(state: GameRoom): GameRoom {
   const { vote } = state;
+
+  // For eliminate-all votes, don't auto-assign uncast votes — only explicit yes-votes count.
+  if (vote.eliminateAllIds.length > 0) {
+    return {
+      ...state,
+      vote: {
+        ...vote,
+        currentNomineeIndex: vote.nominees.length - 1,
+        votingDeadline: null,
+        finished: true,
+      },
+    };
+  }
+
   const lastNominee = vote.nominees[vote.nominees.length - 1];
   const newVotes = { ...vote.votes };
 
@@ -270,6 +288,46 @@ function handleHostSave(state: GameRoom): GameRoom {
   return {
     ...state,
     vote: createEmptyVoteState(),
+  };
+}
+
+function handleRevote(state: GameRoom, tiedIds: PlayerId[]): GameRoom {
+  if (!state.vote.finished) {
+    throw new InvalidActionError('Voting not finished');
+  }
+  return {
+    ...state,
+    vote: {
+      nominees: tiedIds,
+      currentNomineeIndex: -1,
+      votingDeadline: null,
+      votes: {},
+      usedVotes: [],
+      finished: false,
+      revoteRound: state.vote.revoteRound + 1,
+      eliminateAllIds: [],
+    },
+  };
+}
+
+function handleVoteEliminateAll(state: GameRoom, tiedIds: PlayerId[]): GameRoom {
+  if (!state.vote.finished) {
+    throw new InvalidActionError('Voting not finished');
+  }
+  // Single virtual nominee (tiedIds[0]) represents the whole group.
+  // eliminateAllIds tells the UI this is a group vote.
+  return {
+    ...state,
+    vote: {
+      nominees: [tiedIds[0]],
+      currentNomineeIndex: 0,
+      votingDeadline: Date.now() + 10000,
+      votes: {},
+      usedVotes: [],
+      finished: false,
+      revoteRound: state.vote.revoteRound,
+      eliminateAllIds: tiedIds,
+    },
   };
 }
 

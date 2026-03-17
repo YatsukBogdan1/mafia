@@ -15,9 +15,10 @@ interface VideoRoomProps {
   token: string;
   onDisconnect: () => void;
   players: Record<string, ClientPlayer>;
+  votedIds?: string[];
 }
 
-export function VideoRoom({ token, onDisconnect, players }: VideoRoomProps) {
+export function VideoRoom({ token, onDisconnect, players, votedIds = [] }: VideoRoomProps) {
   return (
     <LiveKitRoom
       serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
@@ -34,7 +35,7 @@ export function VideoRoom({ token, onDisconnect, players }: VideoRoomProps) {
       style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
     >
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        <CustomVideoGrid players={players} />
+        <CustomVideoGrid players={players} votedIds={votedIds} />
       </div>
       <ControlBar controls={{ screenShare: false }} />
       <RoomAudioRenderer />
@@ -42,7 +43,7 @@ export function VideoRoom({ token, onDisconnect, players }: VideoRoomProps) {
   );
 }
 
-function CustomVideoGrid({ players }: { players: Record<string, ClientPlayer> }) {
+function CustomVideoGrid({ players, votedIds }: { players: Record<string, ClientPlayer>; votedIds: string[] }) {
   const tracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },
@@ -76,7 +77,7 @@ function CustomVideoGrid({ players }: { players: Record<string, ClientPlayer> })
         gap: 4,
         height: '100%',
         padding: 4,
-        backgroundColor: '#09090b',
+        backgroundColor: '#0c0b0b',
         boxSizing: 'border-box',
       }}
     >
@@ -96,8 +97,13 @@ function CustomVideoGrid({ players }: { players: Record<string, ClientPlayer> })
             style={{
               position: 'relative',
               overflow: 'hidden',
-              borderRadius: 8,
-              backgroundColor: '#27272a',
+              borderRadius: 10,
+              backgroundColor: '#181515',
+              outline: votedIds.includes(track.participant.identity) ? '3px solid #22c55e' : 'none',
+              boxShadow: votedIds.includes(track.participant.identity)
+                ? '0 0 12px rgba(34,197,94,0.3)'
+                : 'inset 0 0 0 1px rgba(255,255,255,0.06)',
+              transition: 'outline 0.2s, box-shadow 0.2s',
             }}
           >
             {track.publication ? (
@@ -112,8 +118,10 @@ function CustomVideoGrid({ players }: { players: Record<string, ClientPlayer> })
                   alignItems: 'center',
                   justifyContent: 'center',
                   height: '100%',
-                  color: '#71717a',
-                  fontSize: 14,
+                  color: '#4a4744',
+                  fontSize: 13,
+                  fontFamily: 'var(--font-dm-sans)',
+                  letterSpacing: '0.02em',
                 }}
               >
                 {player?.name ?? track.participant.identity}
@@ -122,14 +130,18 @@ function CustomVideoGrid({ players }: { players: Record<string, ClientPlayer> })
             <div
               style={{
                 position: 'absolute',
-                bottom: 6,
-                left: 6,
-                background: 'rgba(0,0,0,0.65)',
-                borderRadius: 4,
-                padding: '2px 7px',
-                fontSize: 12,
-                color: 'white',
+                bottom: 8,
+                left: 8,
+                background: 'rgba(10,9,9,0.72)',
+                backdropFilter: 'blur(4px)',
+                borderRadius: 5,
+                padding: '3px 8px',
+                fontSize: 11,
+                fontWeight: 500,
+                color: 'rgba(232,227,222,0.9)',
                 pointerEvents: 'none',
+                letterSpacing: '0.02em',
+                border: '1px solid rgba(255,255,255,0.07)',
               }}
             >
               {label}

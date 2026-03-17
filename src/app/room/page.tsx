@@ -5,11 +5,130 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useGameSocket } from '@/hooks/useGameSocket';
 import { VideoRoom } from '@/components/VideoRoom';
 
+// ─── Design tokens ────────────────────────────────────────────────────────────
+
+const C = {
+  bgBase:    '#0c0b0b',
+  bgPanel:   '#131111',
+  bgSurface: '#1c1919',
+  bgHover:   '#241f1f',
+  border:    'rgba(255,255,255,0.07)',
+  borderHi:  'rgba(255,255,255,0.13)',
+  text:      '#e8e3de',
+  textSec:   '#9c948c',
+  textMuted: '#5a5552',
+  crimson:   '#c41e3a',
+  crimsonDk: '#981630',
+  amber:     '#d4923a',
+  green:     '#22c55e',
+  blue:      '#3b82f6',
+} as const;
+
+const ROLE_COLORS: Record<string, string> = {
+  mafia:    '#ef4444',
+  don:      '#b91c1c',
+  sheriff:  '#3b82f6',
+  villager: '#6b7280',
+};
+
+function roleColor(role: string | null | undefined): string {
+  return role ? (ROLE_COLORS[role] ?? '#6b7280') : '#3a3838';
+}
+function roleLabel(role: string | null | undefined): string {
+  if (!role) return '';
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 /** Format a player as "N. Name" when a seat number is assigned, else just "Name". */
 function pName(player: { name: string; seatNumber: number | null } | null | undefined): string {
   if (!player) return '?';
   return player.seatNumber != null ? `${player.seatNumber}. ${player.name}` : player.name;
 }
+
+// ─── Shared UI primitives ─────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{
+        fontSize: 9, fontWeight: 700, letterSpacing: '0.17em',
+        textTransform: 'uppercase', color: C.textMuted, whiteSpace: 'nowrap',
+      }}>
+        {children}
+      </span>
+      <div style={{ flex: 1, height: 1, background: C.border }} />
+    </div>
+  );
+}
+
+function Card({ children, style, className }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
+  return (
+    <div className={className} style={{
+      background: C.bgSurface,
+      border: `1px solid ${C.border}`,
+      borderRadius: 10,
+      ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function PrimaryBtn({ children, onClick, style }: { children: React.ReactNode; onClick?: () => void; style?: React.CSSProperties }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <button onClick={onClick} style={{
+      width: '100%', padding: '11px 16px', border: 'none', borderRadius: 9,
+      background: hov ? C.crimsonDk : C.crimson, color: 'white',
+      fontSize: 13, fontWeight: 600, letterSpacing: '0.03em', cursor: 'pointer',
+      transition: 'background 0.15s', ...style,
+    }}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
+      {children}
+    </button>
+  );
+}
+
+function GhostBtn({ children, onClick, style }: { children: React.ReactNode; onClick?: () => void; style?: React.CSSProperties }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <button onClick={onClick} style={{
+      width: '100%', padding: '9px 16px', border: `1px solid ${hov ? C.borderHi : C.border}`,
+      borderRadius: 9, background: hov ? C.bgHover : 'transparent',
+      color: hov ? C.textSec : C.textMuted,
+      fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s', ...style,
+    }}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
+      {children}
+    </button>
+  );
+}
+
+function IconBtn({ children, onClick, title, tint = 'neutral', disabled }: {
+  children: React.ReactNode; onClick?: () => void; title?: string;
+  tint?: 'amber' | 'red' | 'neutral' | 'green'; disabled?: boolean;
+}) {
+  const [hov, setHov] = useState(false);
+  const bg = {
+    amber:   hov ? 'rgba(180,90,20,0.55)' : 'rgba(120,60,10,0.4)',
+    red:     hov ? 'rgba(153,27,27,0.65)'  : 'rgba(100,20,20,0.4)',
+    neutral: hov ? C.bgHover               : 'rgba(255,255,255,0.04)',
+    green:   hov ? 'rgba(20,120,60,0.55)'  : 'rgba(10,80,40,0.4)',
+  }[tint];
+  const color = { amber: '#fbbf24', red: '#f87171', neutral: C.textSec, green: '#4ade80' }[tint];
+  return (
+    <button onClick={onClick} title={title} disabled={disabled} style={{
+      padding: '4px 8px', border: `1px solid ${C.border}`, borderRadius: 6,
+      background: bg, color, fontSize: 12, cursor: disabled ? 'not-allowed' : 'pointer',
+      transition: 'all 0.12s', opacity: disabled ? 0.3 : 1,
+    }}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
+      {children}
+    </button>
+  );
+}
+
+// ─── Route ────────────────────────────────────────────────────────────────────
 
 function getWsUrl() {
   if (typeof window === 'undefined') return 'ws://localhost:3000/ws';
@@ -25,16 +144,8 @@ function RoomContent() {
   const code = searchParams.get('code');
 
   const {
-    isConnected,
-    gameState,
-    myPlayerId,
-    myRole,
-    roomCode,
-    error,
-    createRoom,
-    joinRoom,
-    sendHostAction,
-    sendPlayerAction,
+    isConnected, gameState, myPlayerId, myRole, roomCode, error,
+    createRoom, joinRoom, sendHostAction, sendPlayerAction,
   } = useGameSocket({ url: getWsUrl() });
 
   const hasJoined = useRef(false);
@@ -60,15 +171,15 @@ function RoomContent() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roomName: gameState.livekitRoomName, participantName: myPlayerId }),
     })
-      .then((res) => res.json())
-      .then((data) => setToken(data.token));
+      .then(r => r.json())
+      .then(d => setToken(d.token));
   }, [gameState?.livekitRoomName, myPlayerId, token]);
 
   if (error) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-zinc-950 text-white">
-        <p className="text-red-400">{error}</p>
-        <button onClick={() => router.push('/')} className="rounded-lg border border-zinc-600 px-6 py-2 hover:border-zinc-400">
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: C.bgBase, color: C.text }}>
+        <p style={{ color: '#f87171' }}>{error}</p>
+        <button onClick={() => router.push('/')} style={{ padding: '8px 20px', border: `1px solid ${C.border}`, borderRadius: 8, background: 'transparent', color: C.textSec, cursor: 'pointer' }}>
           Back to Lobby
         </button>
       </div>
@@ -77,8 +188,12 @@ function RoomContent() {
 
   if (!gameState || !token) {
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-950 text-white">
-        Connecting...
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.bgBase }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 24, height: 24, borderRadius: '50%', border: `2px solid ${C.crimson}`, borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }} />
+          <span style={{ fontSize: 13, color: C.textMuted, letterSpacing: '0.05em' }}>Connecting…</span>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -88,177 +203,234 @@ function RoomContent() {
   const players = Object.values(gameState.players);
 
   const phaseLabel =
-    phase.type === 'lobby' ? 'Lobby' :
-    phase.type === 'game' ? 'In Progress' :
-    `Game Over — ${phase.winner} win!`;
+    phase.type === 'lobby'    ? 'Lobby' :
+    phase.type === 'game'     ? 'In Progress' :
+    `Game Over`;
+
+  const phaseColor =
+    phase.type === 'lobby'    ? C.textMuted :
+    phase.type === 'game'     ? C.green :
+    C.crimson;
+
+  // Voted IDs for current active nominee only
+  const votedIds = (() => {
+    const { vote } = gameState;
+    if (vote.finished || vote.currentNomineeIndex < 0) return [];
+    const currentNominee = vote.nominees[vote.currentNomineeIndex];
+    return Object.entries(vote.votes)
+      .filter(([, nid]) => nid === currentNominee)
+      .map(([voterId]) => voterId);
+  })();
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-white">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2">
-        <div className="flex items-center gap-3">
-          <span className="font-bold">Mafia</span>
-          <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-sm">{gameState.code}</span>
-          <span className="text-sm text-zinc-400">{phaseLabel}</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {myRole && <span className="rounded bg-zinc-800 px-2 py-0.5 text-sm">{myRole}</span>}
-          <span className="text-sm text-zinc-400">{players.filter((p) => !p.isHost).length} players</span>
-        </div>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bgBase, color: C.text }}>
 
-      {/* Main */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Video */}
-        <div className="flex-1 overflow-hidden">
-          <VideoRoom token={token} onDisconnect={() => router.push('/')} players={gameState.players} />
-        </div>
-
-        {/* Sidebar */}
-        <div className="flex w-72 flex-col gap-3 overflow-y-auto border-l border-zinc-800 p-3">
-          {isHost ? (
-            <HostControls
-              gameState={gameState}
-              sendHostAction={sendHostAction}
-            />
-          ) : (
-            <PlayerControls
-              gameState={gameState}
-              myPlayerId={myPlayerId!}
-              myRole={myRole}
-              sendPlayerAction={sendPlayerAction}
-            />
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <header style={{
+        height: 50, flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 20px', borderBottom: `1px solid ${C.border}`, background: C.bgPanel,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <span style={{ fontFamily: 'var(--font-cinzel)', fontSize: 15, fontWeight: 700, letterSpacing: '0.2em', color: C.text }}>
+            MAFIA
+          </span>
+          <div style={{ width: 1, height: 16, background: C.border }} />
+          <span style={{
+            fontFamily: 'var(--font-jetbrains-mono)', fontSize: 13, fontWeight: 500,
+            letterSpacing: '0.18em', color: C.textSec,
+            background: C.bgSurface, border: `1px solid ${C.border}`,
+            borderRadius: 6, padding: '2px 8px',
+          }}>
+            {gameState.code}
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: phaseColor, boxShadow: `0 0 6px ${phaseColor}` }} />
+            <span style={{ fontSize: 12, color: C.textMuted, letterSpacing: '0.04em' }}>{phaseLabel}</span>
+          </div>
+          {phase.type === 'game' && (
+            <span style={{
+              fontFamily: 'var(--font-jetbrains-mono)', fontSize: 11,
+              color: C.textMuted, background: C.bgSurface,
+              border: `1px solid ${C.border}`, borderRadius: 5, padding: '2px 7px',
+            }}>
+              R{gameState.round}
+            </span>
           )}
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {myRole && (
+            <span style={{
+              fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
+              color: roleColor(myRole), background: `${roleColor(myRole)}18`,
+              border: `1px solid ${roleColor(myRole)}40`,
+              borderRadius: 5, padding: '3px 8px', textTransform: 'capitalize',
+            }}>
+              {myRole}
+            </span>
+          )}
+          <span style={{ fontSize: 12, color: C.textMuted }}>
+            {players.filter(p => !p.isHost).length} players
+          </span>
+        </div>
+      </header>
+
+      {/* ── Main ───────────────────────────────────────────────────────── */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <VideoRoom token={token} onDisconnect={() => router.push('/')} players={gameState.players} votedIds={votedIds} />
+        </div>
+
+        {/* ── Sidebar ──────────────────────────────────────────────────── */}
+        <aside style={{
+          width: 292, flexShrink: 0,
+          display: 'flex', flexDirection: 'column', gap: 10,
+          overflowY: 'auto', padding: 14,
+          borderLeft: `1px solid ${C.border}`, background: C.bgPanel,
+        }}>
+          {isHost ? (
+            <HostControls gameState={gameState} sendHostAction={sendHostAction} />
+          ) : (
+            <PlayerControls gameState={gameState} myPlayerId={myPlayerId!} myRole={myRole} sendPlayerAction={sendPlayerAction} />
+          )}
+        </aside>
       </div>
     </div>
   );
 }
 
-// ─── Host Sidebar ────────────────────────────────────────────────────────────
+// ─── Host Sidebar ─────────────────────────────────────────────────────────────
 
 function HostControls({
-  gameState,
-  sendHostAction,
+  gameState, sendHostAction,
 }: {
   gameState: import('@/lib/game/types').ClientGameState;
-  sendHostAction: (action: import('@/lib/game/types').GameAction) => void;
+  sendHostAction: (a: import('@/lib/game/types').GameAction) => void;
 }) {
   const { phase, players, vote, speaking, round, playerOrder } = gameState;
-  const alivePlayers = Object.values(players).filter((p) => p.isAlive && !p.isHost);
+  const alivePlayers = Object.values(players).filter(p => p.isAlive && !p.isHost);
   const inGame = phase.type === 'game';
 
-  const aliveOrder = playerOrder.filter((id) => players[id]?.isAlive && !players[id]?.isHost);
-  const suggestedSpeakerId = inGame && aliveOrder.length > 0
-    ? aliveOrder[(round - 1) % aliveOrder.length]
-    : null;
+  const aliveOrder = playerOrder.filter(id => players[id]?.isAlive && !players[id]?.isHost);
+  const suggestedSpeakerId = inGame && aliveOrder.length > 0 ? aliveOrder[(round - 1) % aliveOrder.length] : null;
   const suggestedSpeaker = suggestedSpeakerId ? players[suggestedSpeakerId] : null;
 
   return (
     <>
+      {/* Lobby */}
       {phase.type === 'lobby' && (
-        <button
-          onClick={() => sendHostAction({ type: 'start_game' })}
-          className="rounded-lg bg-white py-2 text-sm font-semibold text-black hover:bg-zinc-200"
-        >
-          Start Game
-        </button>
-      )}
-
-      {phase.type === 'gameover' && (
-        <div className="flex flex-col gap-2">
-          <div className="rounded bg-zinc-800 px-3 py-2 text-center text-sm">
-            {phase.winner === 'mafia' ? '🔴 Mafia wins!' : '🟢 Villagers win!'}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ padding: '20px 0 8px', textAlign: 'center' }}>
+            <p style={{ fontSize: 12, color: C.textMuted, margin: 0 }}>
+              {Object.values(players).filter(p => !p.isHost).length} player{Object.values(players).filter(p => !p.isHost).length !== 1 ? 's' : ''} in lobby
+            </p>
           </div>
-          <button
-            onClick={() => sendHostAction({ type: 'reset_game' })}
-            className="rounded-lg bg-white py-2 text-sm font-semibold text-black hover:bg-zinc-200"
-          >
-            Back to Lobby
-          </button>
+          <PrimaryBtn onClick={() => sendHostAction({ type: 'start_game' })}>
+            Start Game
+          </PrimaryBtn>
         </div>
       )}
 
+      {/* Game Over */}
+      {phase.type === 'gameover' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Card style={{ padding: '14px 16px', textAlign: 'center', border: `1px solid ${phase.winner === 'mafia' ? '#b91c1c40' : '#16a34a40'}` }}>
+            <div style={{ fontSize: 22, marginBottom: 4 }}>
+              {phase.winner === 'mafia' ? '🔴' : '🟢'}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: phase.winner === 'mafia' ? '#f87171' : '#4ade80' }}>
+              {phase.winner === 'mafia' ? 'Mafia wins' : 'Villagers win'}
+            </div>
+          </Card>
+          <PrimaryBtn onClick={() => sendHostAction({ type: 'reset_game' })} style={{ background: C.bgSurface, border: `1px solid ${C.border}`, color: C.textSec }}>
+            Back to Lobby
+          </PrimaryBtn>
+        </div>
+      )}
+
+      {/* In Game */}
       {inGame && (
         <>
-          {/* Round info + Next Round */}
-          <div className="flex items-center justify-between rounded bg-zinc-800 px-3 py-2">
-            <div className="flex flex-col">
-              <span className="text-xs text-zinc-400">Round {round}</span>
-              {suggestedSpeaker && (
-                <span className="text-xs text-amber-400">First speaker: {pName(suggestedSpeaker)}</span>
-              )}
+          {/* Round */}
+          <SectionLabel>Round</SectionLabel>
+          <Card style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span style={{ fontFamily: 'var(--font-cinzel)', fontSize: 22, fontWeight: 700, color: C.text }}>{round}</span>
+                {suggestedSpeaker && (
+                  <span style={{ fontSize: 11, color: C.amber }}>
+                    · {pName(suggestedSpeaker)} speaks first
+                  </span>
+                )}
+              </div>
             </div>
-            <button
-              onClick={() => sendHostAction({ type: 'next_round' })}
-              className="rounded bg-zinc-600 px-3 py-1 text-xs hover:bg-zinc-500"
-            >
+            <GhostBtn onClick={() => sendHostAction({ type: 'next_round' })} style={{ width: 'auto', padding: '6px 12px', fontSize: 11 }}>
               Next Round
-            </button>
-          </div>
+            </GhostBtn>
+          </Card>
 
           {/* Mic controls */}
-          <div className="flex gap-2">
-            <button
-              onClick={() => sendHostAction({ type: 'mute_all' })}
-              className="flex-1 rounded bg-zinc-700 py-1.5 text-xs hover:bg-zinc-600"
-            >
+          <SectionLabel>Microphone</SectionLabel>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <GhostBtn onClick={() => sendHostAction({ type: 'mute_all' })} style={{ fontSize: 11, padding: '7px 10px' }}>
               Mute All
-            </button>
-            <button
-              onClick={() => sendHostAction({ type: 'unmute_all' })}
-              className="flex-1 rounded bg-zinc-700 py-1.5 text-xs hover:bg-zinc-600"
-            >
+            </GhostBtn>
+            <GhostBtn onClick={() => sendHostAction({ type: 'unmute_all' })} style={{ fontSize: 11, padding: '7px 10px' }}>
               Unmute All
-            </button>
+            </GhostBtn>
           </div>
 
-          {/* 1-min timer */}
+          {/* Timer */}
+          <SectionLabel>Timer</SectionLabel>
           <SpeakingTimer />
 
-          {/* Player list */}
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-semibold text-zinc-400">Players</span>
-            {alivePlayers.map((p) => (
-              <div key={p.id} className="flex items-center justify-between rounded bg-zinc-800 px-2 py-1.5">
-                <div className="flex items-center gap-1.5 text-sm">
-                  <span>{pName(p)}</span>
-                  {p.role && <span className="text-xs text-zinc-500">{p.role}</span>}
-                  {speaking.currentSpeaker === p.id && <span className="text-xs text-green-400">●</span>}
+          {/* Players */}
+          <SectionLabel>Players ({alivePlayers.length})</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {alivePlayers.map(p => {
+              const isSpeaking = speaking.currentSpeaker === p.id;
+              return (
+                <div key={p.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '8px 10px',
+                  background: isSpeaking ? 'rgba(34,197,94,0.06)' : C.bgSurface,
+                  border: `1px solid ${isSpeaking ? 'rgba(34,197,94,0.25)' : C.border}`,
+                  borderLeft: `3px solid ${roleColor(p.role)}`,
+                  borderRadius: 8,
+                  transition: 'all 0.2s',
+                  ...(isSpeaking ? { boxShadow: '0 0 0 0 rgba(34,197,94,0.4)', animation: 'pulse-ring 2s ease-out infinite' } : {}),
+                }}>
+                  <span style={{
+                    fontFamily: 'var(--font-jetbrains-mono)', fontSize: 11,
+                    color: roleColor(p.role), minWidth: 18, fontWeight: 600,
+                  }}>
+                    {p.seatNumber ?? '—'}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {p.name}
+                    </div>
+                    {p.role && (
+                      <div style={{ fontSize: 10, color: roleColor(p.role), opacity: 0.8, textTransform: 'capitalize' }}>
+                        {roleLabel(p.role)}
+                      </div>
+                    )}
+                  </div>
+                  {isSpeaking && (
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, flexShrink: 0 }} className="animate-breath" />
+                  )}
+                  <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+                    <IconBtn tint="amber" title="Grant mic" onClick={() => sendHostAction({ type: 'grant_speaking', playerId: p.id })}>🎤</IconBtn>
+                    <IconBtn tint="neutral" title="Nominate" disabled={vote.nominees.includes(p.id)} onClick={() => sendHostAction({ type: 'nominate', targetId: p.id })}>+</IconBtn>
+                    <IconBtn tint="red" title="Eliminate" onClick={() => sendHostAction({ type: 'host_eliminate', playerId: p.id })}>×</IconBtn>
+                  </div>
                 </div>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => sendHostAction({ type: 'grant_speaking', playerId: p.id })}
-                    title="Grant mic"
-                    className="rounded px-1.5 py-0.5 text-xs bg-green-800 hover:bg-green-700"
-                  >
-                    🎤
-                  </button>
-                  <button
-                    onClick={() => sendHostAction({ type: 'nominate', targetId: p.id })}
-                    title="Nominate for voting"
-                    disabled={vote.nominees.includes(p.id)}
-                    className="rounded px-1.5 py-0.5 text-xs bg-zinc-600 hover:bg-zinc-500 disabled:opacity-30"
-                  >
-                    +
-                  </button>
-                  <button
-                    onClick={() => sendHostAction({ type: 'host_eliminate', playerId: p.id })}
-                    title="Eliminate"
-                    className="rounded px-1.5 py-0.5 text-xs bg-red-900 hover:bg-red-700"
-                  >
-                    💀
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {speaking.currentSpeaker && (
-              <button
-                onClick={() => sendHostAction({ type: 'end_speaking' })}
-                className="mt-1 rounded bg-zinc-700 py-1 text-xs hover:bg-zinc-600"
-              >
+              <GhostBtn onClick={() => sendHostAction({ type: 'end_speaking' })} style={{ fontSize: 11, padding: '6px 12px', marginTop: 2 }}>
                 End Speaking
-              </button>
+              </GhostBtn>
             )}
           </div>
 
@@ -273,156 +445,244 @@ function HostControls({
   );
 }
 
-// ─── 1-minute speaking timer ─────────────────────────────────────────────────
+// ─── Speaking timer ───────────────────────────────────────────────────────────
 
 function SpeakingTimer() {
-  const [running, setRunning] = useState(false);
-  const [seconds, setSeconds] = useState(60);
-  const intervalRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const [endTime, setEndTime] = useState<number | null>(null);
+  const [remaining, setRemaining] = useState(0);
+  const rafRef = useRef<number>(undefined);
 
-  const start = (duration: number) => {
-    setSeconds(duration);
-    setRunning(true);
-    clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(() => {
-      setSeconds((s) => {
-        if (s <= 1) { setRunning(false); clearInterval(intervalRef.current); return 0; }
-        return s - 1;
-      });
-    }, 1000);
-  };
+  const start = (duration: number) => setEndTime(Date.now() + duration * 1000);
+  const stop = () => { setEndTime(null); setRemaining(0); };
 
-  const stop = () => {
-    setRunning(false);
-    clearInterval(intervalRef.current);
-    setSeconds(60);
-  };
+  useEffect(() => {
+    if (endTime === null) return;
+    const tick = () => {
+      const left = Math.max(0, endTime - Date.now());
+      setRemaining(left);
+      if (left > 0) rafRef.current = requestAnimationFrame(tick);
+      else setEndTime(null);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [endTime]);
 
-  useEffect(() => () => clearInterval(intervalRef.current), []);
+  const running = endTime !== null;
+  const mins   = Math.floor(remaining / 60000);
+  const secs   = Math.floor((remaining % 60000) / 1000);
+  const centis = Math.floor((remaining % 1000) / 10);
+  const display = `${mins}:${String(secs).padStart(2, '0')}.${String(centis).padStart(2, '0')}`;
+  const urgent = running && remaining <= 10000;
 
   return (
-    <div className="flex items-center gap-2 rounded bg-zinc-800 px-3 py-2">
-      <span className={`font-mono text-lg font-bold w-10 ${seconds <= 10 && running ? 'text-red-400' : 'text-amber-400'}`}>
-        {String(Math.floor(seconds / 60)).padStart(1, '0')}:{String(seconds % 60).padStart(2, '0')}
-      </span>
-      {running ? (
-        <button onClick={stop} className="rounded bg-zinc-600 px-3 py-1 text-xs hover:bg-zinc-500">Stop</button>
-      ) : (
-        <>
-          <button onClick={() => start(30)} className="rounded bg-amber-700 px-2 py-1 text-xs hover:bg-amber-600">30s</button>
-          <button onClick={() => start(60)} className="rounded bg-amber-700 px-2 py-1 text-xs hover:bg-amber-600">1 min</button>
-        </>
-      )}
-    </div>
+    <Card style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{
+        fontFamily: 'var(--font-jetbrains-mono)', fontSize: 28, fontWeight: 600,
+        textAlign: 'center', letterSpacing: '0.04em',
+        color: urgent ? '#f87171' : C.amber,
+        textShadow: `0 0 20px ${urgent ? 'rgba(248,113,113,0.35)' : 'rgba(212,146,58,0.35)'}`,
+        transition: 'color 0.3s, text-shadow 0.3s',
+      }}>
+        {display}
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {running ? (
+          <GhostBtn onClick={stop} style={{ fontSize: 11, padding: '6px 10px' }}>Stop</GhostBtn>
+        ) : (
+          <>
+            <GhostBtn onClick={() => start(30)} style={{ fontSize: 11, padding: '6px 10px' }}>30s</GhostBtn>
+            <GhostBtn onClick={() => start(60)} style={{ fontSize: 11, padding: '6px 10px' }}>1 min</GhostBtn>
+          </>
+        )}
+      </div>
+    </Card>
   );
 }
 
-// ─── Dead players section ─────────────────────────────────────────────────────
+// ─── Dead players ─────────────────────────────────────────────────────────────
 
 function DeadPlayers({ players }: { players: import('@/lib/game/types').ClientPlayer[] }) {
-  const dead = players.filter((p) => !p.isAlive && !p.isHost);
+  const dead = players.filter(p => !p.isAlive && !p.isHost);
   if (dead.length === 0) return null;
-
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-semibold text-zinc-500">Eliminated</span>
-      {dead.map((p) => (
-        <div key={p.id} className="rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-500">
-          {pName(p)} {p.role && <span className="text-xs">({p.role})</span>}
-        </div>
-      ))}
-    </div>
+    <>
+      <SectionLabel>Eliminated ({dead.length})</SectionLabel>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {dead.map(p => (
+          <div key={p.id} style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '6px 10px', borderRadius: 7,
+            background: 'rgba(255,255,255,0.02)', border: `1px solid rgba(255,255,255,0.04)`,
+            opacity: 0.6,
+          }}>
+            <div style={{ width: 3, height: 3, borderRadius: '50%', background: C.textMuted, flexShrink: 0 }} />
+            <span style={{ fontSize: 12, color: C.textMuted, textDecoration: 'line-through' }}>{pName(p)}</span>
+            {p.role && <span style={{ fontSize: 10, color: roleColor(p.role), opacity: 0.7, marginLeft: 'auto', textTransform: 'capitalize' }}>{roleLabel(p.role)}</span>}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
-// ─── Voting (host side) ───────────────────────────────────────────────────────
+// ─── Voting controls (host) ───────────────────────────────────────────────────
 
 function VotingControls({
-  gameState,
-  sendHostAction,
+  gameState, sendHostAction,
 }: {
   gameState: import('@/lib/game/types').ClientGameState;
-  sendHostAction: (action: import('@/lib/game/types').GameAction) => void;
+  sendHostAction: (a: import('@/lib/game/types').GameAction) => void;
 }) {
   const { vote, players } = gameState;
-
   if (vote.nominees.length === 0) return null;
 
-  const currentNominee = vote.currentNomineeIndex >= 0
-    ? vote.nominees[vote.currentNomineeIndex]
-    : null;
+  const currentNominee = vote.currentNomineeIndex >= 0 ? vote.nominees[vote.currentNomineeIndex] : null;
 
   return (
-    <div className="flex flex-col gap-2 rounded border border-zinc-700 p-2">
-      <span className="text-xs font-semibold text-zinc-400">Voting</span>
+    <>
+      <SectionLabel>Voting</SectionLabel>
+      <Card style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
 
-      {vote.nominees.map((nid, i) => {
-        const voteCount = Object.values(vote.votes).filter((v) => v === nid).length;
-        const isCurrent = i === vote.currentNomineeIndex;
-        const isDone = i < vote.currentNomineeIndex || vote.finished;
-        return (
-          <div key={nid} className={`rounded px-2 py-1 text-sm ${isCurrent ? 'bg-zinc-700 ring-1 ring-white' : 'bg-zinc-800'} ${isDone ? 'text-zinc-500' : ''}`}>
-            {pName(players[nid])}
-            {isDone && ` — ${voteCount} votes`}
-            {isCurrent && ' (voting now)'}
+        {/* Nominee list */}
+        {vote.eliminateAllIds.length > 0 ? (
+          <div style={{
+            padding: '8px 10px', borderRadius: 7,
+            background: vote.finished ? 'rgba(255,255,255,0.03)' : 'rgba(196,30,58,0.1)',
+            border: `1px solid ${vote.finished ? C.border : 'rgba(196,30,58,0.3)'}`,
+            fontSize: 12, color: vote.finished ? C.textSec : '#fca5a5',
+          }}>
+            Eliminate all: {vote.eliminateAllIds.map(nid => pName(players[nid])).join(', ')}
+            {vote.finished && <span style={{ color: C.textMuted }}> — {vote.usedVotes.length} voted yes</span>}
+            {!vote.finished && <span style={{ color: C.textMuted }}> (voting now)</span>}
           </div>
-        );
-      })}
-
-      {!vote.finished && (
-        <button
-          onClick={() => sendHostAction({ type: 'start_nominee_vote' })}
-          className="rounded bg-white py-1.5 text-xs font-semibold text-black hover:bg-zinc-200"
-        >
-          {vote.currentNomineeIndex < 0
-            ? `Start vote: ${pName(players[vote.nominees[0]])}`
-            : vote.currentNomineeIndex + 1 < vote.nominees.length
-              ? `Next: ${pName(players[vote.nominees[vote.currentNomineeIndex + 1]])}`
-              : 'Finalize'}
-        </button>
-      )}
-
-      {vote.finished && currentNominee && (() => {
-        const topVotes = Math.max(...vote.nominees.map((nid) =>
-          Object.values(vote.votes).filter((v) => v === nid).length
-        ));
-        const topNominees = vote.nominees.filter((nid) =>
-          Object.values(vote.votes).filter((v) => v === nid).length === topVotes
-        );
-        const eliminate = topNominees[0];
-        return (
-          <div className="flex gap-2">
-            <button
-              onClick={() => sendHostAction({ type: 'host_eliminate', playerId: eliminate })}
-              className="flex-1 rounded bg-red-700 py-1.5 text-xs font-semibold hover:bg-red-600"
-            >
-              Eliminate {pName(players[eliminate])}
-            </button>
-            <button
-              onClick={() => sendHostAction({ type: 'host_save' })}
-              className="flex-1 rounded bg-zinc-700 py-1.5 text-xs hover:bg-zinc-600"
-            >
-              Save
-            </button>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {vote.nominees.map((nid, i) => {
+              const voteCount = Object.values(vote.votes).filter(v => v === nid).length;
+              const isCurrent = i === vote.currentNomineeIndex;
+              const isDone = i < vote.currentNomineeIndex || vote.finished;
+              return (
+                <div key={nid} style={{
+                  padding: '7px 10px', borderRadius: 7, fontSize: 12,
+                  background: isCurrent ? 'rgba(196,30,58,0.12)' : 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${isCurrent ? 'rgba(196,30,58,0.35)' : C.border}`,
+                  color: isDone ? C.textMuted : C.text,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                }}>
+                  <span>{pName(players[nid])}</span>
+                  <span style={{ fontSize: 11, color: C.textMuted }}>
+                    {isDone ? `${voteCount} votes` : isCurrent ? 'voting…' : ''}
+                  </span>
+                </div>
+              );
+            })}
           </div>
-        );
-      })()}
-    </div>
+        )}
+
+        {/* Vote countdown (for host) */}
+        {!vote.finished && vote.votingDeadline && (
+          <VoteCountdown deadline={vote.votingDeadline} />
+        )}
+
+        {/* Start/next/finalize */}
+        {!vote.finished && vote.eliminateAllIds.length === 0 && (
+          <PrimaryBtn onClick={() => sendHostAction({ type: 'start_nominee_vote' })} style={{ fontSize: 12, padding: '9px 14px' }}>
+            {vote.currentNomineeIndex < 0
+              ? `Start vote · ${pName(players[vote.nominees[0]])}`
+              : vote.currentNomineeIndex + 1 < vote.nominees.length
+                ? `Next · ${pName(players[vote.nominees[vote.currentNomineeIndex + 1]])}`
+                : 'Finalize'}
+          </PrimaryBtn>
+        )}
+
+        {!vote.finished && vote.eliminateAllIds.length > 0 && (
+          <GhostBtn onClick={() => sendHostAction({ type: 'start_nominee_vote' })} style={{ fontSize: 11, padding: '7px 12px' }}>
+            Finalize vote
+          </GhostBtn>
+        )}
+
+        {/* Finished state */}
+        {vote.finished && vote.eliminateAllIds.length > 0 && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <PrimaryBtn
+              onClick={() => vote.eliminateAllIds.forEach(nid => sendHostAction({ type: 'host_eliminate', playerId: nid }))}
+              style={{ fontSize: 12, padding: '9px 14px' }}
+            >
+              Eliminate all
+            </PrimaryBtn>
+            <GhostBtn onClick={() => sendHostAction({ type: 'host_save' })} style={{ fontSize: 12, padding: '9px 14px' }}>Save</GhostBtn>
+          </div>
+        )}
+
+        {vote.finished && vote.eliminateAllIds.length === 0 && (() => {
+          const topVotes = Math.max(...vote.nominees.map(nid =>
+            Object.values(vote.votes).filter(v => v === nid).length
+          ));
+          const topNominees = vote.nominees.filter(nid =>
+            Object.values(vote.votes).filter(v => v === nid).length === topVotes
+          );
+          const isTie = topNominees.length > 1;
+
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {isTie && (
+                <div style={{ fontSize: 11, color: '#fbbf24', textAlign: 'center', padding: '4px 0' }}>
+                  {vote.revoteRound === 0 ? 'Tie — revote or decide' : 'Tie again — vote to eliminate all or decide'}
+                </div>
+              )}
+
+              {!isTie && (
+                <PrimaryBtn onClick={() => sendHostAction({ type: 'host_eliminate', playerId: topNominees[0] })} style={{ fontSize: 12, padding: '9px 14px' }}>
+                  Eliminate {pName(players[topNominees[0]])}
+                </PrimaryBtn>
+              )}
+
+              {isTie && vote.revoteRound === 0 && (
+                <>
+                  <PrimaryBtn onClick={() => sendHostAction({ type: 'revote', tiedIds: topNominees })} style={{ fontSize: 12, padding: '9px 14px', background: '#b45309' }}>
+                    Revote ({topNominees.map(nid => pName(players[nid])).join(' vs ')})
+                  </PrimaryBtn>
+                  {topNominees.map(nid => (
+                    <GhostBtn key={nid} onClick={() => sendHostAction({ type: 'host_eliminate', playerId: nid })} style={{ fontSize: 11, padding: '7px 12px' }}>
+                      Eliminate {pName(players[nid])}
+                    </GhostBtn>
+                  ))}
+                </>
+              )}
+
+              {isTie && vote.revoteRound >= 1 && (
+                <>
+                  <PrimaryBtn onClick={() => sendHostAction({ type: 'vote_eliminate_all', tiedIds: topNominees })} style={{ fontSize: 12, padding: '9px 14px' }}>
+                    Vote to eliminate all
+                  </PrimaryBtn>
+                  {topNominees.map(nid => (
+                    <GhostBtn key={nid} onClick={() => sendHostAction({ type: 'host_eliminate', playerId: nid })} style={{ fontSize: 11, padding: '7px 12px' }}>
+                      Eliminate {pName(players[nid])}
+                    </GhostBtn>
+                  ))}
+                </>
+              )}
+
+              <GhostBtn onClick={() => sendHostAction({ type: 'host_save' })} style={{ fontSize: 11, padding: '7px 12px' }}>
+                Save
+              </GhostBtn>
+            </div>
+          );
+        })()}
+      </Card>
+    </>
   );
 }
 
 // ─── Player Sidebar ───────────────────────────────────────────────────────────
 
 function PlayerControls({
-  gameState,
-  myPlayerId,
-  myRole,
-  sendPlayerAction,
+  gameState, myPlayerId, myRole, sendPlayerAction,
 }: {
   gameState: import('@/lib/game/types').ClientGameState;
   myPlayerId: string;
   myRole: import('@/lib/game/types').PlayerRole | null;
-  sendPlayerAction: (action: import('@/lib/game/types').GameAction) => void;
+  sendPlayerAction: (a: import('@/lib/game/types').GameAction) => void;
 }) {
   const { phase, players, vote, speaking } = gameState;
   const me = players[myPlayerId];
@@ -431,54 +691,78 @@ function PlayerControls({
     <>
       {/* Role */}
       {myRole && (
-        <div className="rounded bg-zinc-800 px-3 py-2 text-center">
-          <span className="text-xs text-zinc-500">Your role</span>
-          <div className="font-semibold capitalize">{myRole}</div>
-        </div>
+        <Card style={{ padding: '14px 16px', textAlign: 'center', borderColor: `${roleColor(myRole)}30`, borderLeft: `3px solid ${roleColor(myRole)}` }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: C.textMuted, marginBottom: 4 }}>
+            Your Role
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 600, color: roleColor(myRole), textTransform: 'capitalize', letterSpacing: '0.04em' }}>
+            {myRole}
+          </div>
+        </Card>
       )}
 
-      {/* Phase */}
-      <div className="text-center text-sm text-zinc-400">
+      {/* Phase / round */}
+      <div style={{ textAlign: 'center', fontSize: 12, color: C.textMuted, padding: '4px 0' }}>
         {phase.type === 'lobby' && 'Waiting for host to start…'}
-        {phase.type === 'game' && `Round ${gameState.round}`}
-        {phase.type === 'gameover' && `Game over — ${phase.winner} win!`}
+        {phase.type === 'game' && (
+          <span style={{ fontFamily: 'var(--font-jetbrains-mono)', letterSpacing: '0.06em' }}>
+            Round {gameState.round}
+          </span>
+        )}
+        {phase.type === 'gameover' && (
+          <span style={{ color: phase.winner === 'mafia' ? '#f87171' : '#4ade80' }}>
+            Game over — {phase.winner} win!
+          </span>
+        )}
       </div>
 
       {/* Eliminated notice */}
       {me && !me.isAlive && (
-        <div className="rounded bg-red-950 border border-red-800 px-3 py-2 text-center text-sm text-red-300">
-          You have been eliminated
-        </div>
+        <Card style={{
+          padding: '12px 16px', textAlign: 'center',
+          background: 'rgba(153,27,27,0.12)', borderColor: 'rgba(153,27,27,0.3)',
+        }}>
+          <div style={{ fontSize: 16, marginBottom: 4 }}>💀</div>
+          <div style={{ fontSize: 12, color: '#fca5a5', fontWeight: 500 }}>You have been eliminated</div>
+        </Card>
       )}
 
       {/* Speaking indicator */}
       {speaking.currentSpeaker === myPlayerId && (
-        <div className="rounded bg-green-900 px-3 py-2 text-center text-sm text-green-300">
-          You have the mic 🎤
-        </div>
+        <Card style={{
+          padding: '10px 16px', textAlign: 'center',
+          background: 'rgba(34,197,94,0.08)', borderColor: 'rgba(34,197,94,0.25)',
+        }}
+          className="animate-pulse-ring">
+          <div style={{ fontSize: 13, color: '#4ade80', fontWeight: 500 }}>You have the mic 🎤</div>
+        </Card>
       )}
 
       {/* Voting */}
       {me?.isAlive && phase.type === 'game' && vote.nominees.length > 0 && (
-        <PlayerVoting
-          gameState={gameState}
-          myPlayerId={myPlayerId}
-          sendPlayerAction={sendPlayerAction}
-        />
+        <PlayerVoting gameState={gameState} myPlayerId={myPlayerId} sendPlayerAction={sendPlayerAction} />
       )}
 
       {/* Mafia teammates */}
       {(myRole === 'mafia' || myRole === 'don') && (
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-zinc-500">Mafia team</span>
-          {Object.values(players)
-            .filter((p) => !p.isHost && (p.role === 'mafia' || p.role === 'don') && p.id !== myPlayerId)
-            .map((p) => (
-              <div key={p.id} className="rounded bg-zinc-800 px-2 py-1 text-sm">
-                {pName(p)} <span className="text-xs text-zinc-500">({p.role})</span>
-              </div>
-            ))}
-        </div>
+        <>
+          <SectionLabel>Mafia Team</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {Object.values(players)
+              .filter(p => !p.isHost && (p.role === 'mafia' || p.role === 'don') && p.id !== myPlayerId)
+              .map(p => (
+                <div key={p.id} style={{
+                  padding: '7px 10px', borderRadius: 7, fontSize: 12,
+                  background: C.bgSurface, border: `1px solid ${C.border}`,
+                  borderLeft: `3px solid ${roleColor(p.role)}`,
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                  <span style={{ color: C.text }}>{pName(p)}</span>
+                  <span style={{ fontSize: 10, color: roleColor(p.role), marginLeft: 'auto', textTransform: 'capitalize' }}>{p.role}</span>
+                </div>
+              ))}
+          </div>
+        </>
       )}
     </>
   );
@@ -487,99 +771,133 @@ function PlayerControls({
 // ─── Player voting UI ─────────────────────────────────────────────────────────
 
 function PlayerVoting({
-  gameState,
-  myPlayerId,
-  sendPlayerAction,
+  gameState, myPlayerId, sendPlayerAction,
 }: {
   gameState: import('@/lib/game/types').ClientGameState;
   myPlayerId: string;
-  sendPlayerAction: (action: import('@/lib/game/types').GameAction) => void;
+  sendPlayerAction: (a: import('@/lib/game/types').GameAction) => void;
 }) {
   const { vote, players } = gameState;
   const [expired, setExpired] = useState(false);
-
   const hasVoted = vote.usedVotes.includes(myPlayerId);
-  const currentNominee = vote.currentNomineeIndex >= 0
-    ? vote.nominees[vote.currentNomineeIndex]
-    : null;
+  const currentNominee = vote.currentNomineeIndex >= 0 ? vote.nominees[vote.currentNomineeIndex] : null;
+  const isEliminateAll = vote.eliminateAllIds.length > 0;
 
   if (vote.finished) {
     return (
-      <div className="flex flex-col gap-1 rounded border border-zinc-700 p-2">
-        <span className="text-xs text-zinc-400">Voting results</span>
-        {vote.nominees.map((nid) => {
-          const count = Object.values(vote.votes).filter((v) => v === nid).length;
-          return (
-            <div key={nid} className="rounded bg-zinc-800 px-2 py-1 text-sm">
-              {pName(players[nid])} — {count} votes
+      <>
+        <SectionLabel>Voting Results</SectionLabel>
+        <Card style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {isEliminateAll ? (
+            <div style={{ fontSize: 12, color: C.textSec, padding: '4px 6px' }}>
+              Eliminate all: {vote.eliminateAllIds.map(nid => pName(players[nid])).join(', ')}
+              <span style={{ color: C.textMuted }}> — {vote.usedVotes.length} voted yes</span>
             </div>
-          );
-        })}
-      </div>
+          ) : (
+            vote.nominees.map(nid => {
+              const count = Object.values(vote.votes).filter(v => v === nid).length;
+              return (
+                <div key={nid} style={{
+                  padding: '6px 8px', borderRadius: 6, fontSize: 12,
+                  background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`,
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <span style={{ color: C.textSec }}>{pName(players[nid])}</span>
+                  <span style={{ fontFamily: 'var(--font-jetbrains-mono)', fontSize: 11, color: C.textMuted }}>{count} votes</span>
+                </div>
+              );
+            })
+          )}
+        </Card>
+      </>
     );
   }
 
   if (!currentNominee) {
     return (
-      <div className="rounded border border-zinc-700 p-2 text-sm text-zinc-500">
-        Nominees: {vote.nominees.map((nid) => pName(players[nid])).join(', ')}
-        <br />Waiting for host to start vote…
-      </div>
+      <>
+        <SectionLabel>Nominated</SectionLabel>
+        <Card style={{ padding: '10px 12px', fontSize: 12, color: C.textMuted }}>
+          {vote.nominees.map(nid => pName(players[nid])).join(', ')}
+          <div style={{ marginTop: 4, fontSize: 11, color: C.textMuted, opacity: 0.7 }}>Waiting for host to start vote…</div>
+        </Card>
+      </>
     );
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded border border-zinc-700 p-2">
-      <span className="text-xs text-zinc-400">
-        Vote on: {pName(players[currentNominee])} ({vote.currentNomineeIndex + 1}/{vote.nominees.length})
-      </span>
-      {vote.votingDeadline && (
-        <VoteCountdown deadline={vote.votingDeadline} onExpiredChange={setExpired} />
-      )}
-      {hasVoted ? (
-        <p className="text-sm text-zinc-500">Vote cast</p>
-      ) : expired ? (
-        <p className="text-sm text-zinc-500">Time expired</p>
-      ) : (
-        <button
-          onClick={() => sendPlayerAction({ type: 'cast_vote', voterId: myPlayerId })}
-          className="rounded-lg bg-red-700 py-2 text-sm font-semibold hover:bg-red-600"
-        >
-          Vote for {pName(players[currentNominee])}
-        </button>
-      )}
-    </div>
+    <>
+      <SectionLabel>Vote</SectionLabel>
+      <Card style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {isEliminateAll ? (
+          <div style={{ fontSize: 12, color: '#fca5a5', fontWeight: 500 }}>
+            Voting to eliminate all:<br />
+            <span style={{ color: C.textSec }}>{vote.eliminateAllIds.map(nid => pName(players[nid])).join(', ')}</span>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: C.textSec }}>
+            Vote on: <span style={{ color: C.text, fontWeight: 500 }}>{pName(players[currentNominee])}</span>
+            <span style={{ color: C.textMuted }}> ({vote.currentNomineeIndex + 1}/{vote.nominees.length})</span>
+          </div>
+        )}
+        {vote.votingDeadline && <VoteCountdown deadline={vote.votingDeadline} onExpiredChange={setExpired} />}
+        {hasVoted ? (
+          <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'center' }}>Vote cast ✓</div>
+        ) : expired ? (
+          <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'center' }}>Time expired</div>
+        ) : (
+          <PrimaryBtn onClick={() => sendPlayerAction({ type: 'cast_vote', voterId: myPlayerId })} style={{ fontSize: 13, padding: '10px 14px' }}>
+            {isEliminateAll ? 'Vote to eliminate all' : `Vote for ${pName(players[currentNominee])}`}
+          </PrimaryBtn>
+        )}
+      </Card>
+    </>
   );
 }
 
-function VoteCountdown({ deadline, onExpiredChange }: { deadline: number; onExpiredChange?: (expired: boolean) => void }) {
-  const [remaining, setRemaining] = useState(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+// ─── Vote countdown ───────────────────────────────────────────────────────────
+
+function VoteCountdown({ deadline, onExpiredChange }: { deadline: number; onExpiredChange?: (e: boolean) => void }) {
+  const [remaining, setRemaining] = useState(Math.max(0, deadline - Date.now()));
+  const rafRef = useRef<number>(undefined);
 
   useEffect(() => {
-    const update = () => {
-      const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    const tick = () => {
+      const left = Math.max(0, deadline - Date.now());
       setRemaining(left);
       onExpiredChange?.(left <= 0);
-      if (left <= 0) clearInterval(interval);
+      if (left > 0) rafRef.current = requestAnimationFrame(tick);
     };
-    update();
-    const interval = setInterval(update, 100);
-    return () => clearInterval(interval);
+    tick();
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [deadline, onExpiredChange]);
 
+  const secs   = Math.floor(remaining / 1000);
+  const centis = Math.floor((remaining % 1000) / 10);
+  const urgent = remaining <= 3000;
+
   return (
-    <div className="text-center">
-      <span className={`font-mono text-lg font-bold ${remaining <= 1 ? 'text-red-400' : 'text-amber-400'}`}>
-        {remaining}s
+    <div style={{ textAlign: 'center' }}>
+      <span style={{
+        fontFamily: 'var(--font-jetbrains-mono)', fontSize: 24, fontWeight: 600,
+        color: urgent ? '#f87171' : C.amber,
+        textShadow: `0 0 16px ${urgent ? 'rgba(248,113,113,0.4)' : 'rgba(212,146,58,0.4)'}`,
+        transition: 'color 0.3s, text-shadow 0.3s',
+      }}>
+        {secs}.{String(centis).padStart(2, '0')}s
       </span>
     </div>
   );
 }
+
+// ─── Export ───────────────────────────────────────────────────────────────────
 
 export default function RoomPage() {
   return (
     <Suspense fallback={
-      <div className="flex h-screen items-center justify-center bg-zinc-950 text-white">Loading…</div>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0c0b0b', color: '#5a5552', fontSize: 13 }}>
+        Loading…
+      </div>
     }>
       <RoomContent />
     </Suspense>
