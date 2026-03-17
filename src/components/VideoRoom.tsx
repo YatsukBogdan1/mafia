@@ -67,13 +67,18 @@ function CustomVideoGrid({ players, votedIds }: { players: Record<string, Client
   });
 
   const count = sorted.length || 1;
-  const cols = count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4;
+  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+  const cols = isMobile
+    ? (count <= 1 ? 1 : count <= 4 ? 2 : 3)
+    : (count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4);
+  const rows = Math.ceil(count / cols);
 
   return (
     <div
       style={{
         display: 'grid',
         gridTemplateColumns: `repeat(${cols}, 1fr)`,
+        gridTemplateRows: `repeat(${rows}, 1fr)`,
         gap: 4,
         height: '100%',
         padding: 4,
@@ -98,6 +103,7 @@ function CustomVideoGrid({ players, votedIds }: { players: Record<string, Client
               position: 'relative',
               overflow: 'hidden',
               borderRadius: 10,
+              minHeight: 0,
               backgroundColor: '#181515',
               outline: votedIds.includes(track.participant.identity) ? '3px solid #22c55e' : 'none',
               boxShadow: votedIds.includes(track.participant.identity)

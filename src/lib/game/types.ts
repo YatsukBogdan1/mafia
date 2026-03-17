@@ -22,9 +22,9 @@ export interface Player {
   isConnected: boolean;
 }
 
-// --- Speaking (tracks who currently has mic permission) ---
+// --- Microphone state (tracks who has mic permission) ---
 export interface SpeakingState {
-  currentSpeaker: PlayerId | null;
+  unmutedPlayers: PlayerId[];
 }
 
 // --- Voting ---
@@ -68,11 +68,11 @@ export type GameAction =
   | { type: 'player_join'; playerId: PlayerId; name: string }
   | { type: 'player_leave'; playerId: PlayerId }
   | { type: 'start_game' }
-  | { type: 'grant_speaking'; playerId: PlayerId }     // unmute a player
-  | { type: 'end_speaking' }                           // clear current speaker
-  | { type: 'mute_all' }                               // mute everyone (LiveKit side effect)
-  | { type: 'unmute_all' }                             // unmute everyone (LiveKit side effect)
+  | { type: 'grant_speaking'; playerId: PlayerId }     // toggle mic for a player
+  | { type: 'mute_all' }                               // mute everyone
+  | { type: 'unmute_all' }                             // unmute everyone
   | { type: 'nominate'; targetId: PlayerId }           // host adds nominee
+  | { type: 'remove_nominee'; targetId: PlayerId }    // host removes nominee
   | { type: 'start_nominee_vote' }                     // host starts vote on next nominee
   | { type: 'cast_vote'; voterId: PlayerId }
   | { type: 'host_eliminate'; playerId: PlayerId }
@@ -135,7 +135,7 @@ export interface ClientGameState {
 
 // --- Helpers ---
 export function createEmptySpeakingState(): SpeakingState {
-  return { currentSpeaker: null };
+  return { unmutedPlayers: [] };
 }
 
 export function createEmptyVoteState(): VoteState {

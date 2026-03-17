@@ -18,6 +18,15 @@ export class InvalidActionError extends Error {
   }
 }
 
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 export function transition(state: GameRoom, action: GameAction): GameRoom {
   switch (action.type) {
     case 'player_join':
@@ -28,14 +37,14 @@ export function transition(state: GameRoom, action: GameAction): GameRoom {
       return handleStartGame(state);
     case 'grant_speaking':
       return handleGrantSpeaking(state, action.playerId);
-    case 'end_speaking':
-      return handleEndSpeaking(state);
     case 'mute_all':
       return handleMuteAll(state);
     case 'unmute_all':
-      return state; // pure LiveKit side effect, no state change
+      return handleUnmuteAll(state);
     case 'nominate':
       return handleNominate(state, action.targetId);
+    case 'remove_nominee':
+      return handleRemoveNominee(state, action.targetId);
     case 'start_nominee_vote':
       return handleStartNomineeVote(state);
     case 'cast_vote':
@@ -105,20 +114,21 @@ function handleStartGame(state: GameRoom): GameRoom {
   }
 
   const roleAssignments = assignRoles(playerIds);
+  const seatedOrder = shuffle(playerIds);
   const players = { ...state.players };
   for (const [id, role] of Object.entries(roleAssignments)) {
     players[id] = { ...players[id], role };
   }
-  for (let i = 0; i < playerIds.length; i++) {
-    players[playerIds[i]] = { ...players[playerIds[i]], seatNumber: i + 1 };
+  for (let i = 0; i < seatedOrder.length; i++) {
+    players[seatedOrder[i]] = { ...players[seatedOrder[i]], seatNumber: i + 1 };
   }
 
   return {
     ...state,
     players,
-    playerOrder: playerIds,
+    playerOrder: seatedOrder,
     phase: { type: 'game' },
-    speaking: createEmptySpeakingState(),
+    speaking: { unmutedPlayers: playerIds },
     vote: createEmptyVoteState(),
   };
 }
@@ -129,24 +139,30 @@ function handleGrantSpeaking(state: GameRoom, playerId: PlayerId): GameRoom {
   if (!player || !player.isAlive) {
     throw new InvalidActionError('Player not found or dead');
   }
+  const current = state.speaking.unmutedPlayers;
+  const unmutedPlayers = current.includes(playerId)
+    ? current.filter(id => id !== playerId)
+    : [...current, playerId];
   return {
     ...state,
-    speaking: { currentSpeaker: playerId },
-  };
-}
-
-function handleEndSpeaking(state: GameRoom): GameRoom {
-  return {
-    ...state,
-    speaking: { currentSpeaker: null },
+    speaking: { unmutedPlayers },
   };
 }
 
 function handleMuteAll(state: GameRoom): GameRoom {
-  // Clear current speaker when muting all; LiveKit side effect handled in controller
   return {
     ...state,
-    speaking: { currentSpeaker: null },
+    speaking: { unmutedPlayers: [] },
+  };
+}
+
+function handleUnmuteAll(state: GameRoom): GameRoom {
+  const unmutedPlayers = Object.values(state.players)
+    .filter(p => p.isAlive && !p.isHost)
+    .map(p => p.id);
+  return {
+    ...state,
+    speaking: { unmutedPlayers },
   };
 }
 
@@ -164,6 +180,23 @@ function handleNominate(state: GameRoom, targetId: PlayerId): GameRoom {
     vote: {
       ...state.vote,
       nominees: [...state.vote.nominees, targetId],
+    },
+  };
+}
+
+function handleRemoveNominee(state: GameRoom, targetId: PlayerId): GameRoom {
+  const { vote } = state;
+  if (vote.currentNomineeIndex >= 0) {
+    throw new InvalidActionError('Cannot remove nominee after voting has started');
+  }
+  if (!vote.nominees.includes(targetId)) {
+    throw new InvalidActionError('Player is not nominated');
+  }
+  return {
+    ...state,
+    vote: {
+      ...vote,
+      nominees: vote.nominees.filter(id => id !== targetId),
     },
   };
 }
@@ -362,7 +395,7 @@ function handleNextRound(state: GameRoom): GameRoom {
     ...state,
     round: state.round + 1,
     vote: createEmptyVoteState(),
-    speaking: createEmptySpeakingState(),
+    speaking: { unmutedPlayers: getAlivePlayers(state).map(p => p.id) },
   };
 }
 

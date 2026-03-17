@@ -30,6 +30,13 @@ function loadSession(): SessionInfo | null {
 
 interface UseGameSocketOptions {
   url: string;
+  /**
+   * Controls session-based auto-reconnect on connect:
+   *   undefined  → always attempt reconnect with saved session (default)
+   *   null       → skip reconnect entirely (e.g. when creating a fresh room)
+   *   "XXXXX"    → only reconnect if the saved session's roomCode matches this code
+   */
+  forceRoomCode?: string | null;
 }
 
 interface UseGameSocketReturn {
@@ -46,7 +53,7 @@ interface UseGameSocketReturn {
   setDeadViewMode: (mode: DeadViewMode) => void;
 }
 
-export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketReturn {
+export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): UseGameSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [gameState, setGameState] = useState<ClientGameState | null>(null);
@@ -74,11 +81,19 @@ export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketRetur
         hasTriedReconnect.current = true;
         const session = loadSession();
         if (session) {
-          ws.send(JSON.stringify({
-            type: 'reconnect',
-            roomCode: session.roomCode,
-            playerId: session.playerId,
-          }));
+          // forceRoomCode=null → skip reconnect (creating a fresh room)
+          // forceRoomCode=string → only reconnect if session matches that code
+          // forceRoomCode=undefined → always reconnect
+          const shouldReconnect =
+            forceRoomCode === undefined ||
+            (forceRoomCode !== null && session.roomCode === forceRoomCode.toUpperCase());
+          if (shouldReconnect) {
+            ws.send(JSON.stringify({
+              type: 'reconnect',
+              roomCode: session.roomCode,
+              playerId: session.playerId,
+            }));
+          }
         }
       }
     };
@@ -125,7 +140,7 @@ export function useGameSocket({ url }: UseGameSocketOptions): UseGameSocketRetur
     };
 
     ws.onerror = () => { ws.close(); };
-  }, [url]);
+  }, [url, forceRoomCode]);
 
   useEffect(() => {
     connect();

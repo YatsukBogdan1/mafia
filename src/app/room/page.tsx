@@ -143,13 +143,20 @@ function RoomContent() {
   const action = searchParams.get('action');
   const code = searchParams.get('code');
 
+  // null → skip stale-session reconnect (creating fresh room)
+  // code → only reconnect if session matches the requested code
+  // undefined → always attempt reconnect (no explicit intent)
+  const forceRoomCode = action === 'create' ? null : (action === 'join' && code ? code.toUpperCase() : undefined);
+
   const {
     isConnected, gameState, myPlayerId, myRole, roomCode, error,
     createRoom, joinRoom, sendHostAction, sendPlayerAction,
-  } = useGameSocket({ url: getWsUrl() });
+  } = useGameSocket({ url: getWsUrl(), forceRoomCode });
 
   const hasJoined = useRef(false);
   const [token, setToken] = React.useState('');
+  const [tokenRetry, setTokenRetry] = React.useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (!isConnected || hasJoined.current || !name) return;
@@ -166,14 +173,26 @@ function RoomContent() {
 
   useEffect(() => {
     if (!gameState?.livekitRoomName || !myPlayerId || token) return;
+    let cancelled = false;
     fetch('/api/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roomName: gameState.livekitRoomName, participantName: myPlayerId }),
     })
       .then(r => r.json())
-      .then(d => setToken(d.token));
-  }, [gameState?.livekitRoomName, myPlayerId, token]);
+      .then(d => { if (!cancelled && d.token) setToken(d.token); })
+      .catch(() => {
+        if (!cancelled) setTimeout(() => setTokenRetry(n => n + 1), 2000);
+      });
+    return () => { cancelled = true; };
+  }, [gameState?.livekitRoomName, myPlayerId, token, tokenRetry]);
+
+  // Update host URL to include room code so refresh reconnects instead of creating a new room
+  useEffect(() => {
+    if (roomCode && action === 'create' && name) {
+      router.replace(`/room?name=${encodeURIComponent(name)}&action=join&code=${roomCode}`);
+    }
+  }, [roomCode, action, name, router]);
 
   if (error) {
     return (
@@ -244,12 +263,12 @@ function RoomContent() {
           }}>
             {gameState.code}
           </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div className="room-header-phase" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div style={{ width: 6, height: 6, borderRadius: '50%', background: phaseColor, boxShadow: `0 0 6px ${phaseColor}` }} />
             <span style={{ fontSize: 12, color: C.textMuted, letterSpacing: '0.04em' }}>{phaseLabel}</span>
           </div>
           {phase.type === 'game' && (
-            <span style={{
+            <span className="room-header-round" style={{
               fontFamily: 'var(--font-jetbrains-mono)', fontSize: 11,
               color: C.textMuted, background: C.bgSurface,
               border: `1px solid ${C.border}`, borderRadius: 5, padding: '2px 7px',
@@ -269,25 +288,52 @@ function RoomContent() {
               {myRole}
             </span>
           )}
-          <span style={{ fontSize: 12, color: C.textMuted }}>
+          <span style={{ fontSize: 12, color: C.textMuted }} className="room-header-details">
             {players.filter(p => !p.isHost).length} players
           </span>
+          <button
+            className="sidebar-toggle"
+            onClick={() => setSidebarOpen(o => !o)}
+            style={{
+              display: 'none', alignItems: 'center', justifyContent: 'center',
+              width: 34, height: 34, border: `1px solid ${C.border}`,
+              borderRadius: 8, background: sidebarOpen ? C.bgSurface : 'transparent',
+              color: C.textSec, fontSize: 16, cursor: 'pointer',
+            }}
+          >
+            {sidebarOpen ? '✕' : '☰'}
+          </button>
         </div>
       </header>
 
       {/* ── Main ───────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div className="room-layout" style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <VideoRoom token={token} onDisconnect={() => router.push('/')} players={gameState.players} votedIds={votedIds} />
         </div>
 
+        {/* Mobile backdrop */}
+        {sidebarOpen && (
+          <div
+            onClick={() => setSidebarOpen(false)}
+            style={{
+              display: 'none', position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+              zIndex: 99,
+            }}
+            className="sidebar-backdrop"
+          />
+        )}
+
         {/* ── Sidebar ──────────────────────────────────────────────────── */}
-        <aside style={{
-          width: 292, flexShrink: 0,
-          display: 'flex', flexDirection: 'column', gap: 10,
-          overflowY: 'auto', padding: 14,
-          borderLeft: `1px solid ${C.border}`, background: C.bgPanel,
-        }}>
+        <aside
+          className={`room-sidebar${sidebarOpen ? ' open' : ''}`}
+          style={{
+            width: 292, flexShrink: 0,
+            display: 'flex', flexDirection: 'column', gap: 10,
+            overflowY: 'auto', padding: 14,
+            borderLeft: `1px solid ${C.border}`, background: C.bgPanel,
+          }}
+        >
           {isHost ? (
             <HostControls gameState={gameState} sendHostAction={sendHostAction} />
           ) : (
@@ -308,7 +354,10 @@ function HostControls({
   sendHostAction: (a: import('@/lib/game/types').GameAction) => void;
 }) {
   const { phase, players, vote, speaking, round, playerOrder } = gameState;
-  const alivePlayers = Object.values(players).filter(p => p.isAlive && !p.isHost);
+  const alivePlayers = (playerOrder.length > 0
+    ? playerOrder.map(id => players[id]).filter(Boolean)
+    : Object.values(players)
+  ).filter(p => p.isAlive && !p.isHost);
   const inGame = phase.type === 'game';
 
   const aliveOrder = playerOrder.filter(id => players[id]?.isAlive && !players[id]?.isHost);
@@ -388,7 +437,7 @@ function HostControls({
           <SectionLabel>Players ({alivePlayers.length})</SectionLabel>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {alivePlayers.map(p => {
-              const isSpeaking = speaking.currentSpeaker === p.id;
+              const isSpeaking = speaking.unmutedPlayers.includes(p.id);
               return (
                 <div key={p.id} style={{
                   display: 'flex', alignItems: 'center', gap: 8,
@@ -420,18 +469,13 @@ function HostControls({
                     <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, flexShrink: 0 }} className="animate-breath" />
                   )}
                   <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
-                    <IconBtn tint="amber" title="Grant mic" onClick={() => sendHostAction({ type: 'grant_speaking', playerId: p.id })}>🎤</IconBtn>
+                    <IconBtn tint={isSpeaking ? 'green' : 'amber'} title={isSpeaking ? 'Mute' : 'Unmute'} onClick={() => sendHostAction({ type: 'grant_speaking', playerId: p.id })}>🎤</IconBtn>
                     <IconBtn tint="neutral" title="Nominate" disabled={vote.nominees.includes(p.id)} onClick={() => sendHostAction({ type: 'nominate', targetId: p.id })}>+</IconBtn>
                     <IconBtn tint="red" title="Eliminate" onClick={() => sendHostAction({ type: 'host_eliminate', playerId: p.id })}>×</IconBtn>
                   </div>
                 </div>
               );
             })}
-            {speaking.currentSpeaker && (
-              <GhostBtn onClick={() => sendHostAction({ type: 'end_speaking' })} style={{ fontSize: 11, padding: '6px 12px', marginTop: 2 }}>
-                End Speaking
-              </GhostBtn>
-            )}
           </div>
 
           {/* Dead players */}
@@ -561,6 +605,7 @@ function VotingControls({
               const voteCount = Object.values(vote.votes).filter(v => v === nid).length;
               const isCurrent = i === vote.currentNomineeIndex;
               const isDone = i < vote.currentNomineeIndex || vote.finished;
+              const canRemove = vote.currentNomineeIndex < 0;
               return (
                 <div key={nid} style={{
                   padding: '7px 10px', borderRadius: 7, fontSize: 12,
@@ -570,9 +615,14 @@ function VotingControls({
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 }}>
                   <span>{pName(players[nid])}</span>
-                  <span style={{ fontSize: 11, color: C.textMuted }}>
-                    {isDone ? `${voteCount} votes` : isCurrent ? 'voting…' : ''}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 11, color: C.textMuted }}>
+                      {isDone ? `${voteCount} votes` : isCurrent ? 'voting…' : ''}
+                    </span>
+                    {canRemove && (
+                      <IconBtn tint="red" title="Remove" onClick={() => sendHostAction({ type: 'remove_nominee', targetId: nid })}>×</IconBtn>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -728,7 +778,7 @@ function PlayerControls({
       )}
 
       {/* Speaking indicator */}
-      {speaking.currentSpeaker === myPlayerId && (
+      {speaking.unmutedPlayers.includes(myPlayerId) && (
         <Card style={{
           padding: '10px 16px', textAlign: 'center',
           background: 'rgba(34,197,94,0.08)', borderColor: 'rgba(34,197,94,0.25)',
@@ -858,7 +908,7 @@ function PlayerVoting({
 // ─── Vote countdown ───────────────────────────────────────────────────────────
 
 function VoteCountdown({ deadline, onExpiredChange }: { deadline: number; onExpiredChange?: (e: boolean) => void }) {
-  const [remaining, setRemaining] = useState(Math.max(0, deadline - Date.now()));
+  const [remaining, setRemaining] = useState(0);
   const rafRef = useRef<number>(undefined);
 
   useEffect(() => {

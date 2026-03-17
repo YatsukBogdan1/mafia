@@ -49,6 +49,15 @@ export async function unmuteAll(roomName: string): Promise<void> {
   }
 }
 
+export async function mutePlayer(roomName: string, playerId: PlayerId): Promise<void> {
+  const svc = getClient();
+  try {
+    await svc.updateParticipant(roomName, playerId, undefined, CAMERA_ONLY);
+  } catch (err) {
+    console.error('Failed to mute player:', err);
+  }
+}
+
 export async function unmutePlayer(roomName: string, playerId: PlayerId): Promise<void> {
   const svc = getClient();
   try {

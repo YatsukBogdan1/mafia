@@ -177,7 +177,7 @@ function handleAction(ws: WebSocket, action: GameAction, isHostAction: boolean):
 
     // LiveKit side effects for host actions
     if (isHostAction) {
-      handleLivekitSideEffects(newState, action).catch(console.error);
+      handleLivekitSideEffects(room, newState, action).catch(console.error);
     }
 
     // Notify players of role assignments when game starts
@@ -196,8 +196,8 @@ function handleAction(ws: WebSocket, action: GameAction, isHostAction: boolean):
   }
 }
 
-async function handleLivekitSideEffects(room: GameRoom, action: GameAction): Promise<void> {
-  const { livekitRoomName, hostId } = room;
+async function handleLivekitSideEffects(prevState: GameRoom, newState: GameRoom, action: GameAction): Promise<void> {
+  const { livekitRoomName, hostId } = newState;
 
   switch (action.type) {
     case 'mute_all':
@@ -206,14 +206,12 @@ async function handleLivekitSideEffects(room: GameRoom, action: GameAction): Pro
     case 'unmute_all':
       await livekit.unmuteAll(livekitRoomName);
       break;
-    case 'grant_speaking':
-      await livekit.unmutePlayer(livekitRoomName, action.playerId);
-      break;
-    case 'end_speaking': {
-      // Re-mute the player who was speaking (if any)
-      const prev = room.speaking.currentSpeaker;
-      if (prev) {
-        await livekit.setSpectator(livekitRoomName, prev);
+    case 'grant_speaking': {
+      const wasUnmuted = prevState.speaking.unmutedPlayers.includes(action.playerId);
+      if (wasUnmuted) {
+        await livekit.mutePlayer(livekitRoomName, action.playerId);
+      } else {
+        await livekit.unmutePlayer(livekitRoomName, action.playerId);
       }
       break;
     }
