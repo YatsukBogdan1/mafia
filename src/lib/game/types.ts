@@ -20,6 +20,7 @@ export interface Player {
   isAlive: boolean;
   isHost: boolean;
   isConnected: boolean;
+  isSpectator?: boolean;
 }
 
 // --- Microphone state (tracks who has mic permission) ---
@@ -118,7 +119,7 @@ export type C2SMessage =
 // --- Server-to-Client Messages ---
 export type S2CMessage =
   | { type: 'room_created'; roomCode: RoomCode; playerId: PlayerId }
-  | { type: 'room_joined'; playerId: PlayerId; roomCode: RoomCode }
+  | { type: 'room_joined'; playerId: PlayerId; roomCode: RoomCode; isSpectator: boolean }
   | { type: 'reconnected'; playerId: PlayerId; roomCode: RoomCode; role: PlayerRole | null }
   | { type: 'state_update'; state: ClientGameState }
   | { type: 'role_assigned'; role: PlayerRole }
@@ -136,6 +137,7 @@ export interface ClientPlayer {
   isAlive: boolean;
   isHost: boolean;
   isConnected: boolean;
+  isSpectator?: boolean;
 }
 
 export interface ClientGameState {

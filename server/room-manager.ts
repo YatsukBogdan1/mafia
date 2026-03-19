@@ -48,11 +48,11 @@ export function createRoom(
 export function joinRoom(
   code: string,
   playerName: string,
-): { room: GameRoom; playerId: PlayerId } | null {
+): { room: GameRoom; playerId: PlayerId; isSpectator: boolean } | null {
   const room = rooms.get(code);
   if (!room) return null;
-  if (room.phase.type !== 'lobby') return null;
 
+  const isSpectator = room.phase.type !== 'lobby';
   const playerId = nanoid(10);
   room.players[playerId] = {
     id: playerId,
@@ -62,9 +62,10 @@ export function joinRoom(
     isAlive: true,
     isHost: false,
     isConnected: true,
+    isSpectator,
   };
 
-  return { room, playerId };
+  return { room, playerId, isSpectator };
 }
 
 export function getRoom(code: string): GameRoom | undefined {

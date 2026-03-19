@@ -393,7 +393,7 @@ function handleResetGame(state: GameRoom): GameRoom {
 
   const players = { ...state.players };
   for (const [id, player] of Object.entries(players)) {
-    players[id] = { ...player, role: null, seatNumber: null, isAlive: true };
+    players[id] = { ...player, role: null, seatNumber: null, isAlive: true, isSpectator: false };
   }
 
   return {
@@ -459,5 +459,5 @@ function handleUpdateSettings(state: GameRoom, settings: Partial<import('./types
 // --- Helpers ---
 
 function getAlivePlayers(state: GameRoom) {
-  return Object.values(state.players).filter((p) => p.isAlive && !p.isHost);
+  return Object.values(state.players).filter((p) => p.isAlive && !p.isHost && !p.isSpectator);
 }

@@ -310,7 +310,7 @@ function RoomContent() {
   const forceRoomCode = action === 'create' ? null : (action === 'join' && code ? code.toUpperCase() : undefined);
 
   const {
-    isConnected, gameState, myPlayerId, myRole, roomCode, error,
+    isConnected, gameState, myPlayerId, myRole, roomCode, error, isSpectator,
     createRoom, joinRoom, sendHostAction, sendPlayerAction,
   } = useGameSocket({ url: getWsUrl(), forceRoomCode });
 
@@ -495,7 +495,9 @@ function RoomContent() {
             borderLeft: `1px solid ${C.border}`, background: C.bgPanel,
           }}
         >
-          {isHost ? (
+          {isSpectator ? (
+            <SpectatorControls gameState={gameState} />
+          ) : isHost ? (
             <HostControls gameState={gameState} sendHostAction={sendHostAction} />
           ) : (
             <PlayerControls gameState={gameState} myPlayerId={myPlayerId!} myRole={myRole} sendPlayerAction={sendPlayerAction} />
@@ -1105,6 +1107,73 @@ function PlayerVoting({
           </PrimaryBtn>
         )}
       </Card>
+    </>
+  );
+}
+
+// ─── Spectator Sidebar ────────────────────────────────────────────────────────
+
+function SpectatorControls({ gameState }: { gameState: import('@/lib/game/types').ClientGameState }) {
+  const { players, playerOrder, phase } = gameState;
+  const gamePlayers = (playerOrder.length > 0
+    ? playerOrder.map(id => players[id]).filter(Boolean)
+    : Object.values(players)
+  ).filter(p => !p.isHost && !p.isSpectator);
+
+  const spectators = Object.values(players).filter(p => p.isSpectator);
+
+  return (
+    <>
+      <div style={{ padding: '20px 0 8px', textAlign: 'center' }}>
+        <div style={{
+          display: 'inline-block', padding: '3px 10px', borderRadius: 20,
+          background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`,
+          fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', color: C.textMuted,
+          textTransform: 'uppercase',
+        }}>
+          Spectating
+        </div>
+      </div>
+
+      <SectionLabel>Players</SectionLabel>
+      <Card style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {gamePlayers.map(p => (
+          <div key={p.id} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '5px 6px', borderRadius: 6,
+            background: !p.isAlive ? 'rgba(0,0,0,0.2)' : 'transparent',
+            opacity: p.isAlive ? 1 : 0.5,
+          }}>
+            <span style={{ fontSize: 12, color: p.isAlive ? C.text : C.textMuted }}>
+              {pName(p)}
+              {!p.isAlive && <span style={{ marginLeft: 6, fontSize: 10, color: C.textMuted }}>✕</span>}
+            </span>
+            {p.role && (
+              <span style={{ fontSize: 10, color: roleColor(p.role), fontWeight: 600, letterSpacing: '0.05em' }}>
+                {roleLabel(p.role)}
+              </span>
+            )}
+          </div>
+        ))}
+        {gamePlayers.length === 0 && phase.type === 'lobby' && (
+          <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'center', padding: '4px 0' }}>
+            Waiting for game to start…
+          </div>
+        )}
+      </Card>
+
+      {spectators.length > 0 && (
+        <>
+          <SectionLabel>Spectators</SectionLabel>
+          <Card style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {spectators.map(p => (
+              <div key={p.id} style={{ fontSize: 12, color: C.textMuted, padding: '3px 6px' }}>
+                {p.name}
+              </div>
+            ))}
+          </Card>
+        </>
+      )}
     </>
   );
 }

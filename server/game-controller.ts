@@ -132,15 +132,15 @@ function handleReconnect(ws: WebSocket, roomCode: string, playerId: string): voi
 function handleJoinRoom(ws: WebSocket, roomCode: string, playerName: string): void {
   const result = joinRoom(roomCode.toUpperCase(), playerName);
   if (!result) {
-    send(ws, { type: 'error', message: 'Room not found or game already started' });
+    send(ws, { type: 'error', message: 'Room not found' });
     return;
   }
 
-  const { room, playerId } = result;
+  const { room, playerId, isSpectator } = result;
   connections.set(ws, { roomCode: room.code, playerId });
   playerSockets.set(socketKey(room.code, playerId), ws);
 
-  send(ws, { type: 'room_joined', playerId, roomCode: room.code });
+  send(ws, { type: 'room_joined', playerId, roomCode: room.code, isSpectator });
   broadcastState(room.code);
 }
 
@@ -154,6 +154,11 @@ function handleAction(ws: WebSocket, action: GameAction, isHostAction: boolean):
   const room = getRoom(info.roomCode);
   if (!room) {
     send(ws, { type: 'error', message: 'Room not found' });
+    return;
+  }
+
+  if (room.players[info.playerId]?.isSpectator) {
+    send(ws, { type: 'error', message: 'Spectators cannot take actions' });
     return;
   }
 
@@ -350,6 +355,7 @@ function filterStateForPlayer(room: GameRoom, playerId: PlayerId): ClientGameSta
   const viewerRole = viewer?.role;
   const isMafiaTeam = viewerRole === 'mafia' || viewerRole === 'don';
   const isGameOver = room.phase.type === 'gameover';
+  const isSpectator = viewer?.isSpectator ?? false;
   const isDeadSpectator =
     viewer && !viewer.isAlive && !viewer.isHost &&
     (room.deadViewMode[playerId] ?? 'spectator') === 'spectator';
@@ -358,7 +364,7 @@ function filterStateForPlayer(room: GameRoom, playerId: PlayerId): ClientGameSta
   for (const [id, player] of Object.entries(room.players)) {
     let visibleRole: PlayerRole | null = null;
 
-    if (isHost || isGameOver || isDeadSpectator) {
+    if (isHost || isGameOver || isDeadSpectator || isSpectator) {
       visibleRole = player.role;
     } else if (id === playerId) {
       visibleRole = player.role;
@@ -374,6 +380,7 @@ function filterStateForPlayer(room: GameRoom, playerId: PlayerId): ClientGameSta
       isAlive: player.isAlive,
       isHost: player.isHost,
       isConnected: player.isConnected,
+      isSpectator: player.isSpectator,
     };
   }
 

@@ -46,6 +46,7 @@ interface UseGameSocketReturn {
   myRole: PlayerRole | null;
   roomCode: string | null;
   error: string | null;
+  isSpectator: boolean;
   createRoom: (playerName: string) => void;
   joinRoom: (roomCode: string, playerName: string) => void;
   sendHostAction: (action: GameAction) => void;
@@ -61,6 +62,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
   const [myRole, setMyRole] = useState<PlayerRole | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSpectator, setIsSpectator] = useState(false);
 
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const reconnectAttempts = useRef(0);
@@ -109,6 +111,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
         case 'room_joined':
           setMyPlayerId(msg.playerId);
           setRoomCode(msg.roomCode);
+          setIsSpectator(msg.isSpectator);
           saveSession({ roomCode: msg.roomCode, playerId: msg.playerId });
           break;
         case 'reconnected':
@@ -198,6 +201,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
     myRole,
     roomCode,
     error,
+    isSpectator,
     createRoom,
     joinRoom,
     sendHostAction,
