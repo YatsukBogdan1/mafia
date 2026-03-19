@@ -310,7 +310,7 @@ function RoomContent() {
   const forceRoomCode = action === 'create' ? null : (action === 'join' && code ? code.toUpperCase() : undefined);
 
   const {
-    isConnected, gameState, myPlayerId, myRole, roomCode, error, isSpectator,
+    isConnected, gameState, myPlayerId, myRole, roomCode, error,
     createRoom, joinRoom, sendHostAction, sendPlayerAction,
   } = useGameSocket({ url: getWsUrl(), forceRoomCode });
 
@@ -379,6 +379,7 @@ function RoomContent() {
   }
 
   const isHost = myPlayerId === gameState.hostId;
+  const isSpectator = myPlayerId ? (gameState.players[myPlayerId]?.isSpectator ?? false) : false;
   const phase = gameState.phase;
   const players = Object.values(gameState.players);
 

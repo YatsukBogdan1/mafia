@@ -13,6 +13,7 @@ import type {
 } from '../src/lib/game/types';
 import { transition, InvalidActionError } from '../src/lib/game/state-machine';
 import { createRoom, joinRoom, getRoom, updateRoom, createSandboxRoom } from './room-manager';
+import type { JoinRoomResult } from './room-manager';
 import { encode } from './protocol';
 import * as livekit from './livekit';
 
@@ -130,17 +131,28 @@ function handleReconnect(ws: WebSocket, roomCode: string, playerId: string): voi
 }
 
 function handleJoinRoom(ws: WebSocket, roomCode: string, playerName: string): void {
-  const result = joinRoom(roomCode.toUpperCase(), playerName);
-  if (!result) {
+  const result: JoinRoomResult = joinRoom(roomCode.toUpperCase(), playerName);
+
+  if (result.status === 'not_found') {
     send(ws, { type: 'error', message: 'Room not found' });
     return;
   }
+  if (result.status === 'name_taken') {
+    send(ws, { type: 'error', message: 'Name already taken in this room' });
+    return;
+  }
 
-  const { room, playerId, isSpectator } = result;
+  const { room, playerId } = result;
   connections.set(ws, { roomCode: room.code, playerId });
   playerSockets.set(socketKey(room.code, playerId), ws);
 
-  send(ws, { type: 'room_joined', playerId, roomCode: room.code, isSpectator });
+  if (result.status === 'reconnected') {
+    const player = room.players[playerId];
+    updateRoom(room.code, room);
+    send(ws, { type: 'reconnected', playerId, roomCode: room.code, role: player.role });
+  } else {
+    send(ws, { type: 'room_joined', playerId, roomCode: room.code, isSpectator: result.isSpectator });
+  }
   broadcastState(room.code);
 }
 

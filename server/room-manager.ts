@@ -45,12 +45,34 @@ export function createRoom(
   return { room, hostId };
 }
 
-export function joinRoom(
-  code: string,
-  playerName: string,
-): { room: GameRoom; playerId: PlayerId; isSpectator: boolean } | null {
+export type JoinRoomResult =
+  | { status: 'joined'; room: GameRoom; playerId: PlayerId; isSpectator: boolean }
+  | { status: 'reconnected'; room: GameRoom; playerId: PlayerId; isSpectator: boolean }
+  | { status: 'name_taken' }
+  | { status: 'not_found' };
+
+export function joinRoom(code: string, playerName: string): JoinRoomResult {
   const room = rooms.get(code);
-  if (!room) return null;
+  if (!room) return { status: 'not_found' };
+
+  const normalizedName = playerName.trim().toLowerCase();
+
+  // Check for an existing player with the same name (case-insensitive, excluding host)
+  const existing = Object.values(room.players).find(
+    p => !p.isHost && p.name.trim().toLowerCase() === normalizedName,
+  );
+
+  if (existing) {
+    if (existing.isConnected) return { status: 'name_taken' };
+    // Disconnected player with matching name — reconnect them as themselves
+    existing.isConnected = true;
+    return {
+      status: 'reconnected',
+      room,
+      playerId: existing.id,
+      isSpectator: existing.isSpectator ?? false,
+    };
+  }
 
   const isSpectator = room.phase.type !== 'lobby';
   const playerId = nanoid(10);
@@ -65,7 +87,7 @@ export function joinRoom(
     isSpectator,
   };
 
-  return { room, playerId, isSpectator };
+  return { status: 'joined', room, playerId, isSpectator };
 }
 
 export function getRoom(code: string): GameRoom | undefined {
