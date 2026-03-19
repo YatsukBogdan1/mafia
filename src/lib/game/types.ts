@@ -3,7 +3,7 @@ export type PlayerId = string;
 export type RoomCode = string;
 
 // --- Roles ---
-export type PlayerRole = 'mafia' | 'don' | 'sheriff' | 'villager';
+export type PlayerRole = 'mafia' | 'don' | 'sheriff' | 'villager' | 'doctor' | 'hooker';
 
 // --- Game Phases ---
 export type GamePhase =
@@ -45,12 +45,14 @@ export interface RoleDistribution {
   don: number;
   sheriff: number;
   villager: number;
+  doctor: number;
+  hooker: number;
 }
 
 // --- Room Settings ---
 export interface RoomSettings {
   votingTimeoutMs: number; // how long players have to vote (ms)
-  roleDistribution: RoleDistribution | null; // null = use built-in table
+  roleDistribution: RoleDistribution | null;  // null = use built-in table
 }
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {

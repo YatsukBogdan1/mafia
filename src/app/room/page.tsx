@@ -29,6 +29,8 @@ const ROLE_COLORS: Record<string, string> = {
   don:      '#b91c1c',
   sheriff:  '#3b82f6',
   villager: '#6b7280',
+  doctor:   '#22c55e',
+  hooker:   '#a855f7',
 };
 
 function roleColor(role: string | null | undefined): string {
@@ -55,6 +57,8 @@ const DIST_ROLES: { key: keyof RoleDistribution; label: string; color: string }[
   { key: 'mafia',    label: 'Mafia',    color: '#ef4444' },
   { key: 'don',      label: 'Don',      color: '#b91c1c' },
   { key: 'sheriff',  label: 'Sheriff',  color: '#3b82f6' },
+  { key: 'doctor',   label: 'Doctor',   color: '#22c55e' },
+  { key: 'hooker',   label: 'Hooker',   color: '#a855f7' },
   { key: 'villager', label: 'Villager', color: '#6b7280' },
 ];
 
@@ -72,7 +76,7 @@ function RoomSettingsModal({
   const [timeoutMs, setTimeoutMs] = useState(settings.votingTimeoutMs);
   const [useCustomDist, setUseCustomDist] = useState(settings.roleDistribution !== null);
   const [dist, setDist] = useState<RoleDistribution>(
-    settings.roleDistribution ?? { mafia: 2, don: 1, sheriff: 1, villager: Math.max(0, playerCount - 4) }
+    settings.roleDistribution ?? { mafia: 2, don: 1, sheriff: 1, doctor: 0, hooker: 0, villager: Math.max(0, playerCount - 4) }
   );
 
   const distTotal = dist.mafia + dist.don + dist.sheriff + dist.villager;
