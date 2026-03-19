@@ -65,6 +65,10 @@ export function transition(state: GameRoom, action: GameAction): GameRoom {
       return handleBecomeHost(state, action.playerId);
     case 'kick_player':
       return handleKickPlayer(state, action.playerId);
+    case 'assign_roles':
+      return handleAssignRoles(state);
+    case 'update_settings':
+      return handleUpdateSettings(state, action.settings);
     default:
       throw new InvalidActionError(`Unknown action type`);
   }
@@ -117,12 +121,8 @@ function handleStartGame(state: GameRoom): GameRoom {
     );
   }
 
-  const roleAssignments = assignRoles(playerIds);
   const seatedOrder = shuffle(playerIds);
   const players = { ...state.players };
-  for (const [id, role] of Object.entries(roleAssignments)) {
-    players[id] = { ...players[id], role };
-  }
   for (let i = 0; i < seatedOrder.length; i++) {
     players[seatedOrder[i]] = { ...players[seatedOrder[i]], seatNumber: i + 1 };
   }
@@ -135,6 +135,24 @@ function handleStartGame(state: GameRoom): GameRoom {
     speaking: { unmutedPlayers: playerIds },
     vote: createEmptyVoteState(),
   };
+}
+
+function handleAssignRoles(state: GameRoom): GameRoom {
+  if (state.phase.type !== 'game') {
+    throw new InvalidActionError('Game not started');
+  }
+  if (state.playerOrder.length > 0 && state.players[state.playerOrder[0]]?.role !== null) {
+    throw new InvalidActionError('Roles already assigned');
+  }
+
+  const playerIds = state.playerOrder.filter(id => state.players[id]?.isAlive);
+  const roleAssignments = assignRoles(playerIds, state.settings.roleDistribution);
+  const players = { ...state.players };
+  for (const [id, role] of Object.entries(roleAssignments)) {
+    players[id] = { ...players[id], role };
+  }
+
+  return { ...state, players };
 }
 
 
@@ -223,7 +241,7 @@ function handleStartNomineeVote(state: GameRoom): GameRoom {
     vote: {
       ...state.vote,
       currentNomineeIndex: nextIndex,
-      votingDeadline: Date.now() + 10000,
+      votingDeadline: Date.now() + state.settings.votingTimeoutMs,
     },
   };
 }
@@ -358,7 +376,7 @@ function handleVoteEliminateAll(state: GameRoom, tiedIds: PlayerId[]): GameRoom 
     vote: {
       nominees: [tiedIds[0]],
       currentNomineeIndex: 0,
-      votingDeadline: Date.now() + 10000,
+      votingDeadline: Date.now() + state.settings.votingTimeoutMs,
       votes: {},
       usedVotes: [],
       finished: false,
@@ -429,6 +447,13 @@ function handleBecomeHost(state: GameRoom, playerId: PlayerId): GameRoom {
   players[playerId] = { ...players[playerId], isHost: true };
 
   return { ...state, hostId: playerId, players };
+}
+
+function handleUpdateSettings(state: GameRoom, settings: Partial<import('./types').RoomSettings>): GameRoom {
+  if (state.phase.type !== 'lobby') {
+    throw new InvalidActionError('Can only change settings in lobby');
+  }
+  return { ...state, settings: { ...state.settings, ...settings } };
 }
 
 // --- Helpers ---

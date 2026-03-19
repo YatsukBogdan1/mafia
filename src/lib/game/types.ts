@@ -39,10 +39,24 @@ export interface VoteState {
   eliminateAllIds: PlayerId[];       // non-empty = "eliminate all" vote in progress for these players
 }
 
-// --- Room Settings ---
-export interface RoomSettings {}
+// --- Role counts for a custom distribution ---
+export interface RoleDistribution {
+  mafia: number;
+  don: number;
+  sheriff: number;
+  villager: number;
+}
 
-export const DEFAULT_ROOM_SETTINGS: RoomSettings = {};
+// --- Room Settings ---
+export interface RoomSettings {
+  votingTimeoutMs: number; // how long players have to vote (ms)
+  roleDistribution: RoleDistribution | null; // null = use built-in table
+}
+
+export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
+  votingTimeoutMs: 3000,
+  roleDistribution: null,
+};
 
 // --- Dead player view mode ---
 export type DeadViewMode = 'spectator' | 'role';
@@ -82,7 +96,9 @@ export type GameAction =
   | { type: 'revote'; tiedIds: PlayerId[] }
   | { type: 'vote_eliminate_all'; tiedIds: PlayerId[] }
   | { type: 'become_host'; playerId: PlayerId }
-  | { type: 'kick_player'; playerId: PlayerId };
+  | { type: 'kick_player'; playerId: PlayerId }
+  | { type: 'update_settings'; settings: Partial<RoomSettings> }
+  | { type: 'assign_roles' };
 
 // --- Client-to-Server Messages ---
 export type C2SMessage =

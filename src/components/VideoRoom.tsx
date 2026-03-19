@@ -115,7 +115,10 @@ function CustomVideoGrid({ players, votedIds }: { players: Record<string, Client
             {track.publication ? (
               <VideoTrack
                 trackRef={track}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                style={{
+                  width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+                  transform: track.participant.isLocal ? 'scaleX(-1)' : undefined,
+                }}
               />
             ) : (
               <div

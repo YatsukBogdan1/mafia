@@ -1,4 +1,4 @@
-import type { PlayerRole, PlayerId } from './types';
+import type { PlayerRole, PlayerId, RoleDistribution } from './types';
 import { ROLE_DISTRIBUTION } from './constants';
 
 // Fisher-Yates shuffle
@@ -11,12 +11,22 @@ function shuffle<T>(array: T[]): T[] {
   return result;
 }
 
-export function assignRoles(playerIds: PlayerId[]): Record<PlayerId, PlayerRole> {
+export function assignRoles(playerIds: PlayerId[], override?: RoleDistribution | null): Record<PlayerId, PlayerRole> {
   const count = playerIds.length;
-  const distribution = ROLE_DISTRIBUTION[count];
 
-  if (!distribution) {
-    throw new Error(`No role distribution for ${count} players`);
+  let distribution: Record<PlayerRole, number>;
+  if (override) {
+    const total = override.mafia + override.don + override.sheriff + override.villager;
+    if (total !== count) {
+      throw new Error(`Distribution total (${total}) doesn't match player count (${count})`);
+    }
+    distribution = override;
+  } else {
+    const fallback = ROLE_DISTRIBUTION[count];
+    if (!fallback) {
+      throw new Error(`No role distribution for ${count} players`);
+    }
+    distribution = fallback;
   }
 
   const roles: PlayerRole[] = [];

@@ -180,8 +180,8 @@ function handleAction(ws: WebSocket, action: GameAction, isHostAction: boolean):
       handleLivekitSideEffects(room, newState, action).catch(console.error);
     }
 
-    // Notify players of role assignments when game starts
-    if (room.phase.type === 'lobby' && newState.phase.type !== 'lobby') {
+    // Notify players of role assignments when host assigns them
+    if (action.type === 'assign_roles') {
       notifyRoleAssignments(info.roomCode, newState);
     }
 
