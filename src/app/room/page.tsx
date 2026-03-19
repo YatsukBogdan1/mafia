@@ -255,7 +255,7 @@ function RoomContent() {
             MAFIA
           </span>
           <div style={{ width: 1, height: 16, background: C.border }} />
-          <span style={{
+          <span data-testid="room-code" style={{
             fontFamily: 'var(--font-jetbrains-mono)', fontSize: 13, fontWeight: 500,
             letterSpacing: '0.18em', color: C.textSec,
             background: C.bgSurface, border: `1px solid ${C.border}`,
@@ -367,18 +367,35 @@ function HostControls({
   return (
     <>
       {/* Lobby */}
-      {phase.type === 'lobby' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ padding: '20px 0 8px', textAlign: 'center' }}>
-            <p style={{ fontSize: 12, color: C.textMuted, margin: 0 }}>
-              {Object.values(players).filter(p => !p.isHost).length} player{Object.values(players).filter(p => !p.isHost).length !== 1 ? 's' : ''} in lobby
-            </p>
+      {phase.type === 'lobby' && (() => {
+        const lobbyPlayers = Object.values(players).filter(p => !p.isHost);
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ padding: '20px 0 8px', textAlign: 'center' }}>
+              <p style={{ fontSize: 12, color: C.textMuted, margin: 0 }}>
+                {lobbyPlayers.length} player{lobbyPlayers.length !== 1 ? 's' : ''} in lobby
+              </p>
+            </div>
+            {lobbyPlayers.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {lobbyPlayers.map(p => (
+                  <div key={p.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '8px 10px', background: C.bgSurface,
+                    border: `1px solid ${C.border}`, borderRadius: 8,
+                  }}>
+                    <span style={{ fontSize: 12, color: C.text }}>{p.name}</span>
+                    <IconBtn tint="red" title="Kick" onClick={() => sendHostAction({ type: 'kick_player', playerId: p.id })}>×</IconBtn>
+                  </div>
+                ))}
+              </div>
+            )}
+            <PrimaryBtn onClick={() => sendHostAction({ type: 'start_game' })}>
+              Start Game
+            </PrimaryBtn>
           </div>
-          <PrimaryBtn onClick={() => sendHostAction({ type: 'start_game' })}>
-            Start Game
-          </PrimaryBtn>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Game Over */}
       {phase.type === 'gameover' && (
@@ -749,6 +766,13 @@ function PlayerControls({
             {myRole}
           </div>
         </Card>
+      )}
+
+      {/* Become host (lobby only) */}
+      {phase.type === 'lobby' && (
+        <GhostBtn onClick={() => sendPlayerAction({ type: 'become_host', playerId: myPlayerId })}>
+          Become Host
+        </GhostBtn>
       )}
 
       {/* Phase / round */}

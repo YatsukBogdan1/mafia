@@ -61,6 +61,10 @@ export function transition(state: GameRoom, action: GameAction): GameRoom {
       return handleRevote(state, action.tiedIds);
     case 'vote_eliminate_all':
       return handleVoteEliminateAll(state, action.tiedIds);
+    case 'become_host':
+      return handleBecomeHost(state, action.playerId);
+    case 'kick_player':
+      return handleKickPlayer(state, action.playerId);
     default:
       throw new InvalidActionError(`Unknown action type`);
   }
@@ -397,6 +401,34 @@ function handleNextRound(state: GameRoom): GameRoom {
     vote: createEmptyVoteState(),
     speaking: { unmutedPlayers: getAlivePlayers(state).map(p => p.id) },
   };
+}
+
+function handleKickPlayer(state: GameRoom, playerId: PlayerId): GameRoom {
+  if (state.phase.type !== 'lobby') {
+    throw new InvalidActionError('Can only kick players in lobby');
+  }
+  const player = state.players[playerId];
+  if (!player) throw new InvalidActionError('Player not found');
+  if (player.isHost) throw new InvalidActionError('Cannot kick the host');
+
+  const { [playerId]: _, ...remaining } = state.players;
+  return { ...state, players: remaining };
+}
+
+function handleBecomeHost(state: GameRoom, playerId: PlayerId): GameRoom {
+  if (state.phase.type !== 'lobby') {
+    throw new InvalidActionError('Can only change host in lobby');
+  }
+  const player = state.players[playerId];
+  if (!player) throw new InvalidActionError('Player not found');
+  if (player.isHost) throw new InvalidActionError('Already the host');
+
+  const oldHostId = state.hostId;
+  const players = { ...state.players };
+  players[oldHostId] = { ...players[oldHostId], isHost: false };
+  players[playerId] = { ...players[playerId], isHost: true };
+
+  return { ...state, hostId: playerId, players };
 }
 
 // --- Helpers ---

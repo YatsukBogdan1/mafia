@@ -80,7 +80,9 @@ export type GameAction =
   | { type: 'next_round' }
   | { type: 'reset_game' }
   | { type: 'revote'; tiedIds: PlayerId[] }
-  | { type: 'vote_eliminate_all'; tiedIds: PlayerId[] };
+  | { type: 'vote_eliminate_all'; tiedIds: PlayerId[] }
+  | { type: 'become_host'; playerId: PlayerId }
+  | { type: 'kick_player'; playerId: PlayerId };
 
 // --- Client-to-Server Messages ---
 export type C2SMessage =

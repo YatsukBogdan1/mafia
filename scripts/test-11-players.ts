@@ -28,7 +28,7 @@ async function main() {
   );
 
   // Wait for room code to appear
-  const codeEl = hostPage.locator('.font-mono.text-sm').first();
+  const codeEl = hostPage.locator('[data-testid="room-code"]');
   await codeEl.waitFor({ timeout: 15000 });
   const roomCode = (await codeEl.textContent())!.trim();
   console.log(`Room created: ${roomCode}`);

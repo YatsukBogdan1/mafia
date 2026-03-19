@@ -164,7 +164,7 @@ function handleAction(ws: WebSocket, action: GameAction, isHostAction: boolean):
 
   // Validate player-side actions
   if (!isHostAction) {
-    const allowed: GameAction['type'][] = ['cast_vote'];
+    const allowed: GameAction['type'][] = ['cast_vote', 'become_host'];
     if (!allowed.includes(action.type)) {
       send(ws, { type: 'error', message: 'Action not allowed for players' });
       return;
@@ -183,6 +183,18 @@ function handleAction(ws: WebSocket, action: GameAction, isHostAction: boolean):
     // Notify players of role assignments when game starts
     if (room.phase.type === 'lobby' && newState.phase.type !== 'lobby') {
       notifyRoleAssignments(info.roomCode, newState);
+    }
+
+    // Disconnect kicked player
+    if (action.type === 'kick_player') {
+      const kickedKey = socketKey(info.roomCode, action.playerId);
+      const kickedWs = playerSockets.get(kickedKey);
+      if (kickedWs) {
+        send(kickedWs, { type: 'error', message: 'You have been kicked from the room' });
+        connections.delete(kickedWs);
+        playerSockets.delete(kickedKey);
+        kickedWs.close();
+      }
     }
 
     broadcastState(info.roomCode);
