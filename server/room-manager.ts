@@ -1,36 +1,37 @@
 import { nanoid } from 'nanoid';
-import type { GameRoom, PlayerId, RoomSettings } from '../src/lib/game/types';
+import type { GameRoom, UserId, UserType, RoomSettings } from '../src/lib/game/types';
 import {
   createEmptySpeakingState,
   createEmptyVoteState,
   DEFAULT_ROOM_SETTINGS,
 } from '../src/lib/game/types';
 import { ROOM_CODE_LENGTH } from '../src/lib/game/constants';
+import { transition } from '../src/lib/game/state-machine';
 
 const rooms = new Map<string, GameRoom>();
 
 export function createRoom(
   hostName: string,
   settingsOverride?: Partial<RoomSettings>,
-): { room: GameRoom; hostId: PlayerId } {
+): { room: GameRoom; hostId: UserId } {
   const code = nanoid(ROOM_CODE_LENGTH).toUpperCase();
   const hostId = nanoid(10);
 
   const room: GameRoom = {
     code,
     hostId,
-    players: {
+    users: {
       [hostId]: {
         id: hostId,
         name: hostName,
         seatNumber: null,
         role: null,
         isAlive: true,
-        isHost: true,
+        type: 'host',
         isConnected: true,
       },
     },
-    playerOrder: [],
+    userOrder: [],
     phase: { type: 'lobby' },
     round: 1,
     speaking: createEmptySpeakingState(),
@@ -46,8 +47,8 @@ export function createRoom(
 }
 
 export type JoinRoomResult =
-  | { status: 'joined'; room: GameRoom; playerId: PlayerId; isSpectator: boolean }
-  | { status: 'reconnected'; room: GameRoom; playerId: PlayerId; isSpectator: boolean }
+  | { status: 'joined'; room: GameRoom; userId: UserId; userType: UserType }
+  | { status: 'reconnected'; room: GameRoom; userId: UserId; userType: UserType }
   | { status: 'name_taken' }
   | { status: 'not_found' };
 
@@ -57,37 +58,30 @@ export function joinRoom(code: string, playerName: string): JoinRoomResult {
 
   const normalizedName = playerName.trim().toLowerCase();
 
-  // Check for an existing player with the same name (case-insensitive, excluding host)
-  const existing = Object.values(room.players).find(
-    p => !p.isHost && p.name.trim().toLowerCase() === normalizedName,
+  // Check for an existing user with the same name (case-insensitive, excluding host)
+  const existing = Object.values(room.users).find(
+    u => u.type !== 'host' && u.name.trim().toLowerCase() === normalizedName,
   );
 
   if (existing) {
     if (existing.isConnected) return { status: 'name_taken' };
-    // Disconnected player with matching name — reconnect them as themselves
-    existing.isConnected = true;
+    // Disconnected user with matching name — reconnect them
+    const reconnected = transition(room, { type: 'player_reconnect', userId: existing.id });
+    rooms.set(code, reconnected);
     return {
       status: 'reconnected',
-      room,
-      playerId: existing.id,
-      isSpectator: existing.isSpectator ?? false,
+      room: reconnected,
+      userId: existing.id,
+      userType: existing.type,
     };
   }
 
-  const isSpectator = room.phase.type !== 'lobby';
-  const playerId = nanoid(10);
-  room.players[playerId] = {
-    id: playerId,
-    name: playerName,
-    seatNumber: null,
-    role: null,
-    isAlive: true,
-    isHost: false,
-    isConnected: true,
-    isSpectator,
-  };
+  const userId = nanoid(10);
+  const updated = transition(room, { type: 'player_join', userId, name: playerName });
+  rooms.set(code, updated);
+  const userType: UserType = updated.users[userId].type;
 
-  return { status: 'joined', room, playerId, isSpectator };
+  return { status: 'joined', room: updated, userId, userType };
 }
 
 export function getRoom(code: string): GameRoom | undefined {
@@ -102,47 +96,47 @@ export function deleteRoom(code: string): void {
   rooms.delete(code);
 }
 
-const PLAYER_NAMES = [
+const USER_NAMES = [
   'Alice', 'Bob', 'Charlie', 'Diana', 'Eve',
   'Frank', 'Grace', 'Hank', 'Iris', 'Jack', 'Kate',
 ];
 
 export function createSandboxRoom(
-  playerCount: number,
+  userCount: number,
   settingsOverride?: Partial<RoomSettings>,
-): { room: GameRoom; hostId: PlayerId; playerIds: PlayerId[]; playerNames: Record<PlayerId, string> } {
+): { room: GameRoom; hostId: UserId; userIds: UserId[]; userNames: Record<UserId, string> } {
   const code = nanoid(ROOM_CODE_LENGTH).toUpperCase();
   const hostId = nanoid(10);
 
-  const players: Record<PlayerId, GameRoom['players'][string]> = {
+  const users: Record<UserId, GameRoom['users'][string]> = {
     [hostId]: {
       id: hostId,
       name: 'Host',
       seatNumber: null,
       role: null,
       isAlive: true,
-      isHost: true,
+      type: 'host',
       isConnected: true,
     },
   };
 
-  const playerIds: PlayerId[] = [];
-  const playerNames: Record<PlayerId, string> = { [hostId]: 'Host' };
+  const userIds: UserId[] = [];
+  const userNames: Record<UserId, string> = { [hostId]: 'Host' };
 
-  const count = Math.min(playerCount, PLAYER_NAMES.length);
+  const count = Math.min(userCount, USER_NAMES.length);
   for (let i = 0; i < count; i++) {
     const id = nanoid(10);
-    const name = PLAYER_NAMES[i];
-    players[id] = { id, name, seatNumber: null, role: null, isAlive: true, isHost: false, isConnected: true };
-    playerIds.push(id);
-    playerNames[id] = name;
+    const name = USER_NAMES[i];
+    users[id] = { id, name, seatNumber: null, role: null, isAlive: true, type: 'player', isConnected: true };
+    userIds.push(id);
+    userNames[id] = name;
   }
 
   const room: GameRoom = {
     code,
     hostId,
-    players,
-    playerOrder: playerIds,
+    users,
+    userOrder: userIds,
     phase: { type: 'lobby' },
     round: 1,
     speaking: createEmptySpeakingState(),
@@ -154,5 +148,5 @@ export function createSandboxRoom(
   };
 
   rooms.set(code, room);
-  return { room, hostId, playerIds, playerNames };
+  return { room, hostId, userIds, userNames };
 }

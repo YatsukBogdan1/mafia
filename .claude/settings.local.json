@@ -3,7 +3,10 @@
     "allow": [
       "Bash(npx tsc:*)",
       "Bash(npm run:*)",
-      "Bash(npx playwright:*)"
+      "Bash(npx playwright:*)",
+      "Bash(grep -r \"import.*livekit\\\\|from.*livekit\" c:Usersyatsumafia/src c:Usersyatsumafia/server --include=*.ts --include=*.tsx)",
+      "Bash(ls -la /c/Users/yatsu/mafia/*.config.*)",
+      "Bash(find /c/Users/yatsu/mafia/src -type f -name *.tsx -o -name *.ts)"
     ]
   }
 }

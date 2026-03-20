@@ -1,9 +1,12 @@
 // --- Identifiers ---
-export type PlayerId = string;
+export type UserId = string;
 export type RoomCode = string;
 
 // --- Roles ---
 export type PlayerRole = 'mafia' | 'don' | 'sheriff' | 'villager' | 'doctor' | 'hooker';
+
+// --- User type (replaces boolean isHost / isSpectator flags) ---
+export type UserType = 'host' | 'player' | 'spectator';
 
 // --- Game Phases ---
 export type GamePhase =
@@ -11,33 +14,32 @@ export type GamePhase =
   | { type: 'game' }
   | { type: 'gameover'; winner: 'mafia' | 'villagers' };
 
-// --- Player ---
-export interface Player {
-  id: PlayerId;
+// --- User ---
+export interface User {
+  id: UserId;
   name: string;
   seatNumber: number | null;
   role: PlayerRole | null;
   isAlive: boolean;
-  isHost: boolean;
+  type: UserType;
   isConnected: boolean;
-  isSpectator?: boolean;
 }
 
 // --- Microphone state (tracks who has mic permission) ---
 export interface SpeakingState {
-  unmutedPlayers: PlayerId[];
+  unmutedUsers: UserId[];
 }
 
 // --- Voting ---
 export interface VoteState {
-  nominees: PlayerId[];
+  nominees: UserId[];
   currentNomineeIndex: number;       // -1 = not started, 0..n = active
   votingDeadline: number | null;     // epoch ms when 3s window closes
-  votes: Record<PlayerId, PlayerId>; // voterId -> nomineeId
-  usedVotes: PlayerId[];
+  votes: Record<UserId, UserId>;     // voterId -> nomineeId
+  usedVotes: UserId[];
   finished: boolean;
   revoteRound: number;               // 0 = first vote, 1 = first revote
-  eliminateAllIds: PlayerId[];       // non-empty = "eliminate all" vote in progress for these players
+  eliminateAllIds: UserId[];         // non-empty = "eliminate all" vote in progress for these users
 }
 
 // --- Role counts for a custom distribution ---
@@ -67,39 +69,40 @@ export type DeadViewMode = 'spectator' | 'role';
 // --- Room (full server-side state) ---
 export interface GameRoom {
   code: RoomCode;
-  hostId: PlayerId;
-  players: Record<PlayerId, Player>;
-  playerOrder: PlayerId[];
+  hostId: UserId;
+  users: Record<UserId, User>;
+  userOrder: UserId[];
   phase: GamePhase;
   round: number;                     // increments each time host clicks Next Round
   speaking: SpeakingState;
   vote: VoteState;
   settings: RoomSettings;
-  deadViewMode: Record<PlayerId, DeadViewMode>;
-  eliminationLog: Array<{ playerId: PlayerId }>;
+  deadViewMode: Record<UserId, DeadViewMode>;
+  eliminationLog: Array<{ userId: UserId }>;
   livekitRoomName: string;
 }
 
 // --- Game Actions (state machine inputs) ---
 export type GameAction =
-  | { type: 'player_join'; playerId: PlayerId; name: string }
-  | { type: 'player_leave'; playerId: PlayerId }
+  | { type: 'player_join'; userId: UserId; name: string }
+  | { type: 'player_leave'; userId: UserId }
+  | { type: 'player_reconnect'; userId: UserId }
   | { type: 'start_game' }
-  | { type: 'grant_speaking'; playerId: PlayerId }     // toggle mic for a player
-  | { type: 'mute_all' }                               // mute everyone
-  | { type: 'unmute_all' }                             // unmute everyone
-  | { type: 'nominate'; targetId: PlayerId }           // host adds nominee
-  | { type: 'remove_nominee'; targetId: PlayerId }    // host removes nominee
-  | { type: 'start_nominee_vote' }                     // host starts vote on next nominee
-  | { type: 'cast_vote'; voterId: PlayerId }
-  | { type: 'host_eliminate'; playerId: PlayerId }
+  | { type: 'grant_speaking'; userId: UserId }       // toggle mic for a user
+  | { type: 'mute_all' }                              // mute everyone
+  | { type: 'unmute_all' }                            // unmute everyone
+  | { type: 'nominate'; targetId: UserId }            // host adds nominee
+  | { type: 'remove_nominee'; targetId: UserId }     // host removes nominee
+  | { type: 'start_nominee_vote' }                    // host starts vote on next nominee
+  | { type: 'cast_vote'; voterId: UserId }
+  | { type: 'host_eliminate'; userId: UserId }
   | { type: 'host_save' }
   | { type: 'next_round' }
   | { type: 'reset_game' }
-  | { type: 'revote'; tiedIds: PlayerId[] }
-  | { type: 'vote_eliminate_all'; tiedIds: PlayerId[] }
-  | { type: 'become_host'; playerId: PlayerId }
-  | { type: 'kick_player'; playerId: PlayerId }
+  | { type: 'revote'; tiedIds: UserId[] }
+  | { type: 'vote_eliminate_all'; tiedIds: UserId[] }
+  | { type: 'become_host'; userId: UserId }
+  | { type: 'kick_player'; userId: UserId }
   | { type: 'update_settings'; settings: Partial<RoomSettings> }
   | { type: 'assign_roles' };
 
@@ -107,44 +110,43 @@ export type GameAction =
 export type C2SMessage =
   | { type: 'create_room'; playerName: string; settings?: Partial<RoomSettings> }
   | { type: 'join_room'; roomCode: RoomCode; playerName: string }
-  | { type: 'reconnect'; roomCode: RoomCode; playerId: PlayerId }
+  | { type: 'reconnect'; roomCode: RoomCode; userId: UserId }
   | { type: 'host_action'; action: GameAction }
   | { type: 'player_action'; action: GameAction }
-  | { type: 'create_sandbox'; playerCount: number; settings?: Partial<RoomSettings> }
-  | { type: 'sandbox_action'; asPlayerId: PlayerId; action: GameAction }
-  | { type: 'switch_view'; playerId: PlayerId }
+  | { type: 'create_sandbox'; userCount: number; settings?: Partial<RoomSettings> }
+  | { type: 'sandbox_action'; asUserId: UserId; action: GameAction }
+  | { type: 'switch_view'; userId: UserId }
   | { type: 'set_dead_view'; mode: DeadViewMode }
   | { type: 'ping' };
 
 // --- Server-to-Client Messages ---
 export type S2CMessage =
-  | { type: 'room_created'; roomCode: RoomCode; playerId: PlayerId }
-  | { type: 'room_joined'; playerId: PlayerId; roomCode: RoomCode; isSpectator: boolean }
-  | { type: 'reconnected'; playerId: PlayerId; roomCode: RoomCode; role: PlayerRole | null }
+  | { type: 'room_created'; roomCode: RoomCode; userId: UserId }
+  | { type: 'room_joined'; userId: UserId; roomCode: RoomCode; userType: UserType }
+  | { type: 'reconnected'; userId: UserId; roomCode: RoomCode; role: PlayerRole | null }
   | { type: 'state_update'; state: ClientGameState }
   | { type: 'role_assigned'; role: PlayerRole }
-  | { type: 'sandbox_created'; roomCode: RoomCode; hostId: PlayerId; playerIds: PlayerId[]; playerNames: Record<PlayerId, string> }
-  | { type: 'sandbox_view'; playerId: PlayerId; state: ClientGameState; role: PlayerRole | null; mediaStates: Record<PlayerId, { canPublish: boolean; canSee: PlayerId[] }> }
+  | { type: 'sandbox_created'; roomCode: RoomCode; hostId: UserId; userIds: UserId[]; userNames: Record<UserId, string> }
+  | { type: 'sandbox_view'; userId: UserId; state: ClientGameState; role: PlayerRole | null; mediaStates: Record<UserId, { canPublish: boolean; canSee: UserId[] }> }
   | { type: 'error'; message: string }
   | { type: 'pong' };
 
 // --- Filtered state sent to each client ---
-export interface ClientPlayer {
-  id: PlayerId;
+export interface ClientUser {
+  id: UserId;
   name: string;
   seatNumber: number | null;
   role: PlayerRole | null;
   isAlive: boolean;
-  isHost: boolean;
+  type: UserType;
   isConnected: boolean;
-  isSpectator?: boolean;
 }
 
 export interface ClientGameState {
   code: RoomCode;
-  hostId: PlayerId;
-  players: Record<PlayerId, ClientPlayer>;
-  playerOrder: PlayerId[];
+  hostId: UserId;
+  users: Record<UserId, ClientUser>;
+  userOrder: UserId[];
   phase: GamePhase;
   round: number;
   speaking: SpeakingState;
@@ -157,7 +159,7 @@ export interface ClientGameState {
 
 // --- Helpers ---
 export function createEmptySpeakingState(): SpeakingState {
-  return { unmutedPlayers: [] };
+  return { unmutedUsers: [] };
 }
 
 export function createEmptyVoteState(): VoteState {

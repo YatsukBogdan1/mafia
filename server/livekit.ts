@@ -1,5 +1,5 @@
 import { RoomServiceClient, TrackSource } from 'livekit-server-sdk';
-import type { PlayerId, Player, GamePhase } from '../src/lib/game/types';
+import type { UserId, User, GamePhase } from '../src/lib/game/types';
 
 // Permissions for a "muted" participant: camera on, microphone blocked
 const CAMERA_ONLY = { canPublish: true, canSubscribe: true, canPublishData: true, canPublishSources: [TrackSource.CAMERA] };
@@ -22,7 +22,7 @@ function getClient(): RoomServiceClient {
   return client;
 }
 
-export async function muteAll(roomName: string, hostId: PlayerId): Promise<void> {
+export async function muteAll(roomName: string, hostId: UserId): Promise<void> {
   const svc = getClient();
   try {
     const participants = await svc.listParticipants(roomName);
@@ -49,65 +49,64 @@ export async function unmuteAll(roomName: string): Promise<void> {
   }
 }
 
-export async function mutePlayer(roomName: string, playerId: PlayerId): Promise<void> {
+export async function muteUser(roomName: string, userId: UserId): Promise<void> {
   const svc = getClient();
   try {
-    await svc.updateParticipant(roomName, playerId, undefined, CAMERA_ONLY);
+    await svc.updateParticipant(roomName, userId, undefined, CAMERA_ONLY);
   } catch (err) {
-    console.error('Failed to mute player:', err);
+    console.error('Failed to mute user:', err);
   }
 }
 
-export async function unmutePlayer(roomName: string, playerId: PlayerId): Promise<void> {
+export async function unmuteUser(roomName: string, userId: UserId): Promise<void> {
   const svc = getClient();
   try {
-    await svc.updateParticipant(roomName, playerId, undefined, FULL_PUBLISH);
+    await svc.updateParticipant(roomName, userId, undefined, FULL_PUBLISH);
   } catch (err) {
-    console.error('Failed to unmute player:', err);
+    console.error('Failed to unmute user:', err);
   }
 }
 
-export async function setSpectator(roomName: string, playerId: PlayerId): Promise<void> {
+export async function setSpectator(roomName: string, userId: UserId): Promise<void> {
   const svc = getClient();
   try {
-    // Dead players: no camera or mic
-    await svc.updateParticipant(roomName, playerId, undefined, NO_PUBLISH);
+    // Dead users: no camera or mic
+    await svc.updateParticipant(roomName, userId, undefined, NO_PUBLISH);
   } catch (err) {
     console.error('Failed to set spectator:', err);
   }
 }
 
 /**
- * Pure computation of what each player can see/hear.
+ * Pure computation of what each user can see/hear.
  * Used by sandbox for display.
- * With no subphases, everyone sees everyone except dead players (non-host).
  */
-export interface PlayerMediaState {
+export interface UserMediaState {
   canPublish: boolean;
-  canSee: PlayerId[];
+  canSee: UserId[];
 }
 
 export function computeMediaStates(
-  players: Record<PlayerId, Player>,
+  users: Record<UserId, User>,
   phase: GamePhase,
-): Record<PlayerId, PlayerMediaState> {
-  const result: Record<PlayerId, PlayerMediaState> = {};
-  const allIds = Object.keys(players);
+): Record<UserId, UserMediaState> {
+  const result: Record<UserId, UserMediaState> = {};
+  const allIds = Object.keys(users);
 
   const deadIds = new Set(
-    Object.values(players)
-      .filter((p) => !p.isAlive && !p.isHost)
-      .map((p) => p.id),
+    Object.values(users)
+      .filter((u) => !u.isAlive && u.type !== 'host')
+      .map((u) => u.id),
   );
 
-  for (const [id, player] of Object.entries(players)) {
-    // canPublish: dead non-host players can't publish
-    const canPublish = player.isAlive || player.isHost;
+  for (const [id, user] of Object.entries(users)) {
+    // canPublish: dead non-host users can't publish
+    const canPublish = user.isAlive || user.type === 'host';
 
-    // canSee: everyone sees everyone except dead players (only host sees dead)
-    const canSee = player.isHost || phase.type === 'gameover'
+    // canSee: everyone sees everyone except dead users (only host sees dead)
+    const canSee = user.type === 'host' || phase.type === 'gameover'
       ? allIds
-      : allIds.filter((pid) => !deadIds.has(pid));
+      : allIds.filter((uid) => !deadIds.has(uid));
     void phase; // used above
 
     void id; // suppress unused warning

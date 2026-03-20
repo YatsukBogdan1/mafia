@@ -9,12 +9,12 @@ import {
 } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { DisconnectReason, Track } from 'livekit-client';
-import type { ClientPlayer } from '@/lib/game/types';
+import type { ClientUser } from '@/lib/game/types';
 
 interface VideoRoomProps {
   token: string;
   onDisconnect: () => void;
-  players: Record<string, ClientPlayer>;
+  players: Record<string, ClientUser>;
   votedIds?: string[];
 }
 
@@ -43,7 +43,7 @@ export function VideoRoom({ token, onDisconnect, players, votedIds = [] }: Video
   );
 }
 
-function CustomVideoGrid({ players, votedIds }: { players: Record<string, ClientPlayer>; votedIds: string[] }) {
+function CustomVideoGrid({ players, votedIds }: { players: Record<string, ClientUser>; votedIds: string[] }) {
   const tracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },
@@ -54,8 +54,8 @@ function CustomVideoGrid({ players, votedIds }: { players: Record<string, Client
     const pB = players[b.participant.identity];
 
     // Host always last
-    if (pA?.isHost && !pB?.isHost) return 1;
-    if (!pA?.isHost && pB?.isHost) return -1;
+    if (pA?.type === 'host' && pB?.type !== 'host') return 1;
+    if (pA?.type !== 'host' && pB?.type === 'host') return -1;
 
     // Sort by seat number (assigned at game start); null = not yet assigned
     const seatA = pA?.seatNumber ?? 999;
@@ -89,7 +89,7 @@ function CustomVideoGrid({ players, votedIds }: { players: Record<string, Client
       {sorted.map((track) => {
         const player = players[track.participant.identity];
         const label = player
-          ? player.isHost
+          ? player.type === 'host'
             ? `Host: ${player.name}`
             : player.seatNumber
               ? `${player.seatNumber}. ${player.name}`

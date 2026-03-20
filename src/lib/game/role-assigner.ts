@@ -1,4 +1,4 @@
-import type { PlayerRole, PlayerId, RoleDistribution } from './types';
+import type { PlayerRole, UserId, RoleDistribution } from './types';
 import { ROLE_DISTRIBUTION } from './constants';
 
 // Fisher-Yates shuffle
@@ -11,8 +11,8 @@ function shuffle<T>(array: T[]): T[] {
   return result;
 }
 
-export function assignRoles(playerIds: PlayerId[], override?: RoleDistribution | null): Record<PlayerId, PlayerRole> {
-  const count = playerIds.length;
+export function assignRoles(userIds: UserId[], override?: RoleDistribution | null): Record<UserId, PlayerRole> {
+  const count = userIds.length;
 
   let distribution: Record<PlayerRole, number>;
   if (override) {
@@ -37,11 +37,11 @@ export function assignRoles(playerIds: PlayerId[], override?: RoleDistribution |
   }
 
   const shuffledRoles = shuffle(roles);
-  const shuffledPlayers = shuffle(playerIds);
+  const shuffledUsers = shuffle(userIds);
 
-  const assignments: Record<PlayerId, PlayerRole> = {};
-  shuffledPlayers.forEach((playerId, index) => {
-    assignments[playerId] = shuffledRoles[index];
+  const assignments: Record<UserId, PlayerRole> = {};
+  shuffledUsers.forEach((userId, index) => {
+    assignments[userId] = shuffledRoles[index];
   });
 
   return assignments;

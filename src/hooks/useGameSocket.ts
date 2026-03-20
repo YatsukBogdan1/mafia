@@ -14,7 +14,7 @@ const SESSION_KEY = 'mafia_session';
 
 interface SessionInfo {
   roomCode: string;
-  playerId: string;
+  userId: string;
 }
 
 function saveSession(info: SessionInfo) {
@@ -42,7 +42,7 @@ interface UseGameSocketOptions {
 interface UseGameSocketReturn {
   isConnected: boolean;
   gameState: ClientGameState | null;
-  myPlayerId: string | null;
+  myUserId: string | null;
   myRole: PlayerRole | null;
   roomCode: string | null;
   error: string | null;
@@ -57,7 +57,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [gameState, setGameState] = useState<ClientGameState | null>(null);
-  const [myPlayerId, setMyPlayerId] = useState<string | null>(null);
+  const [myUserId, setMyUserId] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<PlayerRole | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,9 +81,6 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
         hasTriedReconnect.current = true;
         const session = loadSession();
         if (session) {
-          // forceRoomCode=null → skip reconnect (creating a fresh room)
-          // forceRoomCode=string → only reconnect if session matches that code
-          // forceRoomCode=undefined → always reconnect
           const shouldReconnect =
             forceRoomCode === undefined ||
             (forceRoomCode !== null && session.roomCode === forceRoomCode.toUpperCase());
@@ -91,7 +88,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
             ws.send(JSON.stringify({
               type: 'reconnect',
               roomCode: session.roomCode,
-              playerId: session.playerId,
+              userId: session.userId,
             }));
           }
         }
@@ -102,23 +99,23 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
       const msg = JSON.parse(event.data) as S2CMessage;
       switch (msg.type) {
         case 'room_created':
-          setMyPlayerId(msg.playerId);
+          setMyUserId(msg.userId);
           setRoomCode(msg.roomCode);
           setError(null);
-          saveSession({ roomCode: msg.roomCode, playerId: msg.playerId });
+          saveSession({ roomCode: msg.roomCode, userId: msg.userId });
           break;
         case 'room_joined':
-          setMyPlayerId(msg.playerId);
+          setMyUserId(msg.userId);
           setRoomCode(msg.roomCode);
           setError(null);
-          saveSession({ roomCode: msg.roomCode, playerId: msg.playerId });
+          saveSession({ roomCode: msg.roomCode, userId: msg.userId });
           break;
         case 'reconnected':
-          setMyPlayerId(msg.playerId);
+          setMyUserId(msg.userId);
           setRoomCode(msg.roomCode);
           if (msg.role) setMyRole(msg.role);
           setError(null);
-          saveSession({ roomCode: msg.roomCode, playerId: msg.playerId });
+          saveSession({ roomCode: msg.roomCode, userId: msg.userId });
           break;
         case 'state_update':
           setGameState(msg.state);
@@ -197,7 +194,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
   return {
     isConnected,
     gameState,
-    myPlayerId,
+    myUserId,
     myRole,
     roomCode,
     error,

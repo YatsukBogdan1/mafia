@@ -1,12 +1,12 @@
-import type { Player } from './types';
+import type { User } from './types';
 
 export type WinResult = 'mafia' | 'villagers' | null;
 
-export function checkWinCondition(players: Record<string, Player>): WinResult {
-  const alive = Object.values(players).filter((p) => p.isAlive && !p.isHost);
+export function checkWinCondition(users: Record<string, User>): WinResult {
+  const alive = Object.values(users).filter((u) => u.isAlive && u.type === 'player');
 
   const mafiaAlive = alive.filter(
-    (p) => p.role === 'mafia' || p.role === 'don',
+    (u) => u.role === 'mafia' || u.role === 'don',
   ).length;
 
   const villagersAlive = alive.length - mafiaAlive;
