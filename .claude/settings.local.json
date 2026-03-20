@@ -13,7 +13,9 @@
       "Bash(grep -r \"votingDeadline\\\\|votingTimeout\\\\|finish.*vote\\\\|auto.*vote\" c:Usersyatsumafiaserver --include=*.ts)",
       "Bash(find /c/Users/yatsu/mafia -name *useGameSocket* -o -name *useSocket* -o -name *socket*)",
       "Bash(grep -r \"player_leave\\\\|player_reconnect\" /c/Users/yatsu/mafia/src --include=*.ts --include=*.tsx)",
-      "Bash(grep -r \"onDisconnect\\\\|Back\\\\|back button\\\\|leave room\" /c/Users/yatsu/mafia/src --include=*.tsx --include=*.ts)"
+      "Bash(grep -r \"onDisconnect\\\\|Back\\\\|back button\\\\|leave room\" /c/Users/yatsu/mafia/src --include=*.tsx --include=*.ts)",
+      "Bash(railway version:*)",
+      "Bash(railway --version)"
     ]
   }
 }
