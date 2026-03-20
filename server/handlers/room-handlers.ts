@@ -6,8 +6,17 @@ import type { JoinRoomResult } from '../room-manager';
 import { connections, userSockets, socketKey, send } from '../connection-state';
 import { broadcastState } from './state-broadcast';
 
-export function handleCreateRoom(ws: WebSocket, playerName: string, settings?: Partial<RoomSettings>): void {
-  const { room, hostId } = createRoom(playerName, settings);
+export function handleCreateRoom(
+  ws: WebSocket,
+  playerName: string,
+  settings: Partial<RoomSettings> | undefined,
+  authUserId: string | null,
+): void {
+  if (!authUserId) {
+    send(ws, { type: 'error', message: 'Authentication required' });
+    return;
+  }
+  const { room, hostId } = createRoom(playerName, settings, authUserId);
 
   connections.set(ws, { roomCode: room.code, userId: hostId });
   userSockets.set(socketKey(room.code, hostId), ws);
@@ -16,7 +25,16 @@ export function handleCreateRoom(ws: WebSocket, playerName: string, settings?: P
   broadcastState(room.code);
 }
 
-export function handleReconnect(ws: WebSocket, roomCode: string, userId: string): void {
+export function handleReconnect(
+  ws: WebSocket,
+  roomCode: string,
+  clientUserId: string,
+  authUserId: string | null,
+): void {
+  // Prefer the server-verified identity; fall back to the client-supplied id
+  // only for unauthenticated (sandbox/test) connections.
+  const userId = authUserId ?? clientUserId;
+
   const room = getRoom(roomCode.toUpperCase());
   if (!room) {
     send(ws, { type: 'error', message: 'Room not found' });
@@ -29,8 +47,17 @@ export function handleReconnect(ws: WebSocket, roomCode: string, userId: string)
     return;
   }
 
+  // If there's already an active socket for this user, notify and close it
+  const key = socketKey(room.code, userId);
+  const oldWs = userSockets.get(key);
+  if (oldWs && oldWs !== ws && oldWs.readyState === oldWs.OPEN) {
+    connections.delete(oldWs);
+    send(oldWs, { type: 'session_replaced' });
+    oldWs.close();
+  }
+
   connections.set(ws, { roomCode: room.code, userId });
-  userSockets.set(socketKey(room.code, userId), ws);
+  userSockets.set(key, ws);
 
   const updated = transition(room, { type: 'player_reconnect', userId });
   updateRoom(room.code, updated);
@@ -39,11 +66,24 @@ export function handleReconnect(ws: WebSocket, roomCode: string, userId: string)
   broadcastState(room.code);
 }
 
-export function handleJoinRoom(ws: WebSocket, roomCode: string, playerName: string): void {
-  const result: JoinRoomResult = joinRoom(roomCode.toUpperCase(), playerName);
+export function handleJoinRoom(
+  ws: WebSocket,
+  roomCode: string,
+  playerName: string,
+  authUserId: string | null,
+): void {
+  if (!authUserId) {
+    send(ws, { type: 'error', message: 'Authentication required' });
+    return;
+  }
+  const result: JoinRoomResult = joinRoom(roomCode.toUpperCase(), playerName, authUserId);
 
   if (result.status === 'not_found') {
     send(ws, { type: 'error', message: 'Room not found' });
+    return;
+  }
+  if (result.status === 'already_connected') {
+    send(ws, { type: 'error', message: 'You are already connected to this room in another tab' });
     return;
   }
   if (result.status === 'name_taken') {
@@ -57,7 +97,6 @@ export function handleJoinRoom(ws: WebSocket, roomCode: string, playerName: stri
 
   if (result.status === 'reconnected') {
     const user = room.users[userId];
-    updateRoom(room.code, room);
     send(ws, { type: 'reconnected', userId, roomCode: room.code, role: user.role });
   } else {
     send(ws, { type: 'room_joined', userId, roomCode: room.code, userType: result.userType });

@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useGameSocket } from '@/hooks/useGameSocket';
+import { useAuth } from '@/hooks/useAuth';
 import { useLivekitToken } from '@/hooks/useLivekitToken';
 import { VideoRoom } from '@/components/VideoRoom';
 import { C, roleColor } from '@/styles/tokens';
@@ -16,45 +17,65 @@ function getWsUrl() {
   return `${proto}://${window.location.host}/ws`;
 }
 
-export function RoomContent() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const name = searchParams.get('name');
-  const action = searchParams.get('action');
-  const code = searchParams.get('code');
+interface Props {
+  roomId: string; // 'NEW' = create, otherwise = room code to join
+}
 
-  const forceRoomCode = action === 'create' ? null : (action === 'join' && code ? code.toUpperCase() : undefined);
+export function RoomContent({ roomId }: Props) {
+  const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+
+  const isCreating = roomId === 'NEW';
+  const forceRoomCode = isCreating ? null : roomId;
 
   const {
-    isConnected, gameState, myUserId, myRole, roomCode, error,
+    isConnected, reconnectPending, gameState, myUserId, myRole, roomCode, error,
     createRoom, joinRoom, sendHostAction, sendPlayerAction,
   } = useGameSocket({ url: getWsUrl(), forceRoomCode });
 
   const hasJoined = useRef(false);
+  const saveDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
   const token = useLivekitToken(gameState?.livekitRoomName, myUserId);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const handleMediaChange = useCallback((camera: boolean, mic: boolean) => {
+    clearTimeout(saveDebounce.current);
+    saveDebounce.current = setTimeout(() => {
+      fetch('/api/auth/media-prefs', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ camera, mic }),
+      }).catch(() => {});
+    }, 800);
+  }, []);
+
+  // Auth guard
   useEffect(() => {
-    if (!isConnected || hasJoined.current || !name) return;
+    if (!authLoading && !user) router.replace('/');
+  }, [authLoading, user, router]);
+
+  // Join or create once connected (wait for any in-flight reconnect first)
+  useEffect(() => {
+    if (!isConnected || hasJoined.current || authLoading || !user || reconnectPending) return;
     if (roomCode) { hasJoined.current = true; return; }
-    const timer = setTimeout(() => {
-      if (hasJoined.current) return;
-      hasJoined.current = true;
-      if (action === 'create') createRoom(name);
-      else if (action === 'join' && code) joinRoom(code, name);
-      else router.push('/');
-    }, 200);
-    return () => clearTimeout(timer);
-  }, [isConnected, name, action, code, roomCode, createRoom, joinRoom, router]);
+    hasJoined.current = true;
+    const name = user.displayName;
+    if (isCreating) createRoom(name);
+    else joinRoom(roomId, name);
+  }, [isConnected, reconnectPending, authLoading, user, roomCode, isCreating, roomId, createRoom, joinRoom]);
 
-  // Update host URL to include room code so refresh reconnects instead of creating a new room
+  // After creation, replace /room/NEW → /room/[CODE]
   useEffect(() => {
-    if (roomCode && action === 'create' && name) {
-      router.replace(`/room?name=${encodeURIComponent(name)}&action=join&code=${roomCode}`);
+    if (roomCode && isCreating) {
+      router.replace(`/room/${roomCode}`);
     }
-  }, [roomCode, action, name, router]);
+  }, [roomCode, isCreating, router]);
 
-  if (error) {
+  if (authLoading || !user) {
+    return <LoadingScreen />;
+  }
+
+  if (error && !gameState) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: C.bgBase, color: C.text }}>
         <p style={{ color: '#f87171' }}>{error}</p>
@@ -66,15 +87,7 @@ export function RoomContent() {
   }
 
   if (!gameState || !token) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.bgBase }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 24, height: 24, borderRadius: '50%', border: `2px solid ${C.crimson}`, borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }} />
-          <span style={{ fontSize: 13, color: C.textMuted, letterSpacing: '0.05em' }}>Connecting…</span>
-        </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   const isHost = myUserId === gameState.hostId;
@@ -92,7 +105,6 @@ export function RoomContent() {
     phase.type === 'game'     ? C.green :
     C.crimson;
 
-  // Voted IDs for current active nominee only
   const votedIds = (() => {
     const { vote } = gameState;
     if (vote.finished || vote.currentNomineeIndex < 0) return [];
@@ -170,10 +182,18 @@ export function RoomContent() {
       {/* Main */}
       <div className="room-layout" style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <VideoRoom token={token} onDisconnect={() => router.push('/')} players={gameState.users} votedIds={votedIds} />
+          <VideoRoom
+            token={token}
+            onDisconnect={() => router.push('/')}
+            players={gameState.users}
+            votedIds={votedIds}
+            initialCamera={user.mediaPrefs.camera}
+            initialMic={user.mediaPrefs.mic}
+            onMediaChange={handleMediaChange}
+            hideLeave={phase.type === 'game'}
+          />
         </div>
 
-        {/* Mobile backdrop */}
         {sidebarOpen && (
           <div
             onClick={() => setSidebarOpen(false)}
@@ -185,7 +205,6 @@ export function RoomContent() {
           />
         )}
 
-        {/* Sidebar */}
         <aside
           className={`room-sidebar${sidebarOpen ? ' open' : ''}`}
           style={{
@@ -204,6 +223,18 @@ export function RoomContent() {
           )}
         </aside>
       </div>
+    </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0c0b0b' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+        <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid #c41e3a', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }} />
+        <span style={{ fontSize: 13, color: '#4a4744', letterSpacing: '0.05em' }}>Connecting…</span>
+      </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

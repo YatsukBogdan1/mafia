@@ -13,9 +13,10 @@ const rooms = new Map<string, GameRoom>();
 export function createRoom(
   hostName: string,
   settingsOverride?: Partial<RoomSettings>,
+  explicitHostId?: string,
 ): { room: GameRoom; hostId: UserId } {
   const code = nanoid(ROOM_CODE_LENGTH).toUpperCase();
-  const hostId = nanoid(10);
+  const hostId = explicitHostId ?? nanoid(10);
 
   const room: GameRoom = {
     code,
@@ -49,39 +50,52 @@ export function createRoom(
 export type JoinRoomResult =
   | { status: 'joined'; room: GameRoom; userId: UserId; userType: UserType }
   | { status: 'reconnected'; room: GameRoom; userId: UserId; userType: UserType }
+  | { status: 'already_connected' }
   | { status: 'name_taken' }
   | { status: 'not_found' };
 
-export function joinRoom(code: string, playerName: string): JoinRoomResult {
+export function joinRoom(code: string, playerName: string, userId: string): JoinRoomResult {
   const room = rooms.get(code);
   if (!room) return { status: 'not_found' };
 
-  const normalizedName = playerName.trim().toLowerCase();
-
-  // Check for an existing user with the same name (case-insensitive, excluding host)
-  const existing = Object.values(room.users).find(
-    u => u.type !== 'host' && u.name.trim().toLowerCase() === normalizedName,
-  );
-
+  const existing = room.users[userId];
   if (existing) {
-    if (existing.isConnected) return { status: 'name_taken' };
-    // Disconnected user with matching name — reconnect them
-    const reconnected = transition(room, { type: 'player_reconnect', userId: existing.id });
+    if (existing.isConnected) return { status: 'already_connected' };
+    const reconnected = transition(room, { type: 'player_reconnect', userId });
     rooms.set(code, reconnected);
-    return {
-      status: 'reconnected',
-      room: reconnected,
-      userId: existing.id,
-      userType: existing.type,
-    };
+    return { status: 'reconnected', room: reconnected, userId, userType: existing.type };
   }
 
-  const userId = nanoid(10);
+  // First time this user joins — check name conflict with other users
+  const nameTaken = Object.values(room.users).some(
+    u => u.id !== userId && u.name.trim().toLowerCase() === playerName.trim().toLowerCase(),
+  );
+  if (nameTaken) return { status: 'name_taken' };
+
   const updated = transition(room, { type: 'player_join', userId, name: playerName });
   rooms.set(code, updated);
-  const userType: UserType = updated.users[userId].type;
+  return { status: 'joined', room: updated, userId, userType: updated.users[userId].type };
+}
 
-  return { status: 'joined', room: updated, userId, userType };
+export interface RoomSummary {
+  code: string;
+  hostName: string;
+  playerCount: number;
+  phase: GameRoom['phase']['type'];
+}
+
+export function listRooms(): RoomSummary[] {
+  const result: RoomSummary[] = [];
+  for (const room of rooms.values()) {
+    const host = room.users[room.hostId];
+    result.push({
+      code: room.code,
+      hostName: host?.name ?? 'Unknown',
+      playerCount: Object.values(room.users).filter(u => u.type !== 'host').length,
+      phase: room.phase.type,
+    });
+  }
+  return result;
 }
 
 export function getRoom(code: string): GameRoom | undefined {

@@ -6,7 +6,14 @@
       "Bash(npx playwright:*)",
       "Bash(grep -r \"import.*livekit\\\\|from.*livekit\" c:Usersyatsumafia/src c:Usersyatsumafia/server --include=*.ts --include=*.tsx)",
       "Bash(ls -la /c/Users/yatsu/mafia/*.config.*)",
-      "Bash(find /c/Users/yatsu/mafia/src -type f -name *.tsx -o -name *.ts)"
+      "Bash(find /c/Users/yatsu/mafia/src -type f -name *.tsx -o -name *.ts)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(grep -r \"database\\\\|postgres\\\\|mongodb\\\\|sql\\\\|prisma\" c:Usersyatsumafia --include=*.ts --include=*.tsx --include=*.json)",
+      "Bash(npm install:*)",
+      "Bash(grep -r \"votingDeadline\\\\|votingTimeout\\\\|finish.*vote\\\\|auto.*vote\" c:Usersyatsumafiaserver --include=*.ts)",
+      "Bash(find /c/Users/yatsu/mafia -name *useGameSocket* -o -name *useSocket* -o -name *socket*)",
+      "Bash(grep -r \"player_leave\\\\|player_reconnect\" /c/Users/yatsu/mafia/src --include=*.ts --include=*.tsx)",
+      "Bash(grep -r \"onDisconnect\\\\|Back\\\\|back button\\\\|leave room\" /c/Users/yatsu/mafia/src --include=*.tsx --include=*.ts)"
     ]
   }
 }

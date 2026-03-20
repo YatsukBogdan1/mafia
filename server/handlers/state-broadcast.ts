@@ -55,7 +55,6 @@ export function filterStateForUser(room: GameRoom, userId: UserId): ClientGameSt
   const viewerRole = viewer?.role;
   const isMafiaTeam = viewerRole === 'mafia' || viewerRole === 'don';
   const isGameOver = room.phase.type === 'gameover';
-  const isSpectator = viewer?.type === 'spectator';
   const isDeadSpectator =
     viewer && !viewer.isAlive && viewer.type === 'player' &&
     (room.deadViewMode[userId] ?? 'spectator') === 'spectator';
@@ -64,7 +63,7 @@ export function filterStateForUser(room: GameRoom, userId: UserId): ClientGameSt
   for (const [id, user] of Object.entries(room.users)) {
     let visibleRole: PlayerRole | null = null;
 
-    if (isHost || isGameOver || isDeadSpectator || isSpectator) {
+    if (isHost || isGameOver || isDeadSpectator) {
       visibleRole = user.role;
     } else if (id === userId) {
       visibleRole = user.role;

@@ -19,7 +19,7 @@ const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
   console.log('Client connected');
-  handleConnection(ws);
+  handleConnection(ws, null);
 });
 
 server.listen(PORT, () => {

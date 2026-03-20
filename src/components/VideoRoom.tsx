@@ -1,11 +1,13 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import {
   LiveKitRoom,
   ControlBar,
   useTracks,
   VideoTrack,
   RoomAudioRenderer,
+  useLocalParticipant,
 } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { DisconnectReason, Track } from 'livekit-client';
@@ -16,16 +18,29 @@ interface VideoRoomProps {
   onDisconnect: () => void;
   players: Record<string, ClientUser>;
   votedIds?: string[];
+  initialCamera?: boolean;
+  initialMic?: boolean;
+  onMediaChange?: (camera: boolean, mic: boolean) => void;
+  hideLeave?: boolean;
 }
 
-export function VideoRoom({ token, onDisconnect, players, votedIds = [] }: VideoRoomProps) {
+export function VideoRoom({
+  token,
+  onDisconnect,
+  players,
+  votedIds = [],
+  initialCamera = true,
+  initialMic = true,
+  onMediaChange,
+  hideLeave = false,
+}: VideoRoomProps) {
   return (
     <LiveKitRoom
       serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
       token={token}
       connect={true}
-      video={true}
-      audio={true}
+      video={initialCamera}
+      audio={initialMic}
       onDisconnected={(reason) => {
         if (reason === DisconnectReason.CLIENT_INITIATED) {
           onDisconnect();
@@ -37,10 +52,33 @@ export function VideoRoom({ token, onDisconnect, players, votedIds = [] }: Video
       <div style={{ flex: 1, overflow: 'hidden' }}>
         <CustomVideoGrid players={players} votedIds={votedIds} />
       </div>
-      <ControlBar controls={{ screenShare: false }} />
+      <ControlBar controls={{ screenShare: false, leave: !hideLeave }} />
       <RoomAudioRenderer />
+      {onMediaChange && <MediaStateTracker onMediaChange={onMediaChange} />}
     </LiveKitRoom>
   );
+}
+
+/** Watches local mic/camera state from inside LiveKitRoom and reports changes. */
+function MediaStateTracker({ onMediaChange }: { onMediaChange: (camera: boolean, mic: boolean) => void }) {
+  const { isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
+  const initializedRef = useRef(false);
+  const prevRef = useRef({ camera: isCameraEnabled, mic: isMicrophoneEnabled });
+
+  useEffect(() => {
+    // Skip the very first effect — that's just the initial state being reported
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      prevRef.current = { camera: isCameraEnabled, mic: isMicrophoneEnabled };
+      return;
+    }
+    if (prevRef.current.camera !== isCameraEnabled || prevRef.current.mic !== isMicrophoneEnabled) {
+      prevRef.current = { camera: isCameraEnabled, mic: isMicrophoneEnabled };
+      onMediaChange(isCameraEnabled, isMicrophoneEnabled);
+    }
+  }, [isCameraEnabled, isMicrophoneEnabled, onMediaChange]);
+
+  return null;
 }
 
 function CustomVideoGrid({ players, votedIds }: { players: Record<string, ClientUser>; votedIds: string[] }) {
@@ -53,16 +91,13 @@ function CustomVideoGrid({ players, votedIds }: { players: Record<string, Client
     const pA = players[a.participant.identity];
     const pB = players[b.participant.identity];
 
-    // Host always last
     if (pA?.type === 'host' && pB?.type !== 'host') return 1;
     if (pA?.type !== 'host' && pB?.type === 'host') return -1;
 
-    // Sort by seat number (assigned at game start); null = not yet assigned
     const seatA = pA?.seatNumber ?? 999;
     const seatB = pB?.seatNumber ?? 999;
     if (seatA !== seatB) return seatA - seatB;
 
-    // Fallback: alphabetical by name for consistent lobby order
     return (pA?.name ?? '').localeCompare(pB?.name ?? '');
   });
 

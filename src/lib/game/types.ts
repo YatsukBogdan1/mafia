@@ -117,6 +117,7 @@ export type C2SMessage =
   | { type: 'sandbox_action'; asUserId: UserId; action: GameAction }
   | { type: 'switch_view'; userId: UserId }
   | { type: 'set_dead_view'; mode: DeadViewMode }
+  | { type: 'list_rooms' }
   | { type: 'ping' };
 
 // --- Server-to-Client Messages ---
@@ -128,6 +129,8 @@ export type S2CMessage =
   | { type: 'role_assigned'; role: PlayerRole }
   | { type: 'sandbox_created'; roomCode: RoomCode; hostId: UserId; userIds: UserId[]; userNames: Record<UserId, string> }
   | { type: 'sandbox_view'; userId: UserId; state: ClientGameState; role: PlayerRole | null; mediaStates: Record<UserId, { canPublish: boolean; canSee: UserId[] }> }
+  | { type: 'room_list'; rooms: Array<{ code: string; hostName: string; playerCount: number; phase: string }> }
+  | { type: 'session_replaced' }
   | { type: 'error'; message: string }
   | { type: 'pong' };
 

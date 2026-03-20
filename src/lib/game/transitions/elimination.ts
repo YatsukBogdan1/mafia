@@ -1,8 +1,6 @@
 import type { GameRoom, UserId } from '../types';
-import { createEmptyVoteState } from '../types';
 import { checkWinCondition } from '../win-checker';
 import { InvalidActionError } from '../state-machine';
-import { getAliveUsers } from './helpers';
 
 export function handleHostEliminate(state: GameRoom, userId: UserId): GameRoom {
   const user = state.users[userId];
@@ -17,7 +15,6 @@ export function handleHostEliminate(state: GameRoom, userId: UserId): GameRoom {
       [userId]: { ...user, isAlive: false },
     },
     eliminationLog: [...state.eliminationLog, { userId }],
-    vote: createEmptyVoteState(),
   };
 
   const winner = checkWinCondition(newState.users);
@@ -35,7 +32,5 @@ export function handleNextRound(state: GameRoom): GameRoom {
   return {
     ...state,
     round: state.round + 1,
-    vote: createEmptyVoteState(),
-    speaking: { unmutedUsers: getAliveUsers(state).map(u => u.id) },
   };
 }

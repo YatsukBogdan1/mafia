@@ -41,6 +41,7 @@ interface UseGameSocketOptions {
 
 interface UseGameSocketReturn {
   isConnected: boolean;
+  reconnectPending: boolean;
   gameState: ClientGameState | null;
   myUserId: string | null;
   myRole: PlayerRole | null;
@@ -65,6 +66,8 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const reconnectAttempts = useRef(0);
   const hasTriedReconnect = useRef(false);
+  const sessionReplacedRef = useRef(false);
+  const [reconnectPending, setReconnectPending] = useState(false);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -85,6 +88,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
             forceRoomCode === undefined ||
             (forceRoomCode !== null && session.roomCode === forceRoomCode.toUpperCase());
           if (shouldReconnect) {
+            setReconnectPending(true);
             ws.send(JSON.stringify({
               type: 'reconnect',
               roomCode: session.roomCode,
@@ -111,6 +115,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
           saveSession({ roomCode: msg.roomCode, userId: msg.userId });
           break;
         case 'reconnected':
+          setReconnectPending(false);
           setMyUserId(msg.userId);
           setRoomCode(msg.roomCode);
           if (msg.role) setMyRole(msg.role);
@@ -123,7 +128,12 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
         case 'role_assigned':
           setMyRole(msg.role);
           break;
+        case 'session_replaced':
+          sessionReplacedRef.current = true;
+          setError('Connected from another device');
+          break;
         case 'error':
+          setReconnectPending(false);
           setError(msg.message);
           break;
         case 'pong':
@@ -133,6 +143,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
 
     ws.onclose = () => {
       setIsConnected(false);
+      if (sessionReplacedRef.current) return;
       hasTriedReconnect.current = false;
       const delay = Math.min(1000 * 2 ** reconnectAttempts.current, 10000);
       reconnectAttempts.current++;
@@ -193,6 +204,7 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
 
   return {
     isConnected,
+    reconnectPending,
     gameState,
     myUserId,
     myRole,
