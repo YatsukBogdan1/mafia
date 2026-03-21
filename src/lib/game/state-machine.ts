@@ -9,7 +9,7 @@ import {
   handleNominate, handleRemoveNominee, handleStartNomineeVote,
   handleCastVote, handleRevote, handleVoteEliminateAll, handleHostSave,
 } from './transitions/voting';
-import { handleHostEliminate, handleNextRound } from './transitions/elimination';
+import { handleHostEliminate, handleVoteEliminate, handleNextRound } from './transitions/elimination';
 
 export class InvalidActionError extends Error {
   constructor(message: string) {
@@ -44,6 +44,8 @@ export function transition(state: GameRoom, action: GameAction): GameRoom {
       return handleCastVote(state, action.voterId);
     case 'host_eliminate':
       return handleHostEliminate(state, action.userId);
+    case 'vote_eliminate':
+      return handleVoteEliminate(state, action.userId);
     case 'host_save':
       return handleHostSave(state);
     case 'next_round':

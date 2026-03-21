@@ -90,7 +90,7 @@ export function VotingControls({
         {vote.finished && vote.eliminateAllIds.length > 0 && (
           <div style={{ display: 'flex', gap: 6 }}>
             <PrimaryBtn
-              onClick={() => vote.eliminateAllIds.forEach(nid => sendHostAction({ type: 'host_eliminate', userId: nid }))}
+              onClick={() => vote.eliminateAllIds.forEach(nid => sendHostAction({ type: 'vote_eliminate', userId: nid }))}
               style={{ fontSize: 12, padding: '9px 14px' }}
             >
               Eliminate all
@@ -117,7 +117,7 @@ export function VotingControls({
               )}
 
               {!isTie && (
-                <PrimaryBtn onClick={() => sendHostAction({ type: 'host_eliminate', userId: topNominees[0] })} style={{ fontSize: 12, padding: '9px 14px' }}>
+                <PrimaryBtn onClick={() => sendHostAction({ type: 'vote_eliminate', userId: topNominees[0] })} style={{ fontSize: 12, padding: '9px 14px' }}>
                   Eliminate {displayName(users[topNominees[0]])}
                 </PrimaryBtn>
               )}
@@ -128,7 +128,7 @@ export function VotingControls({
                     Revote ({topNominees.map(nid => displayName(users[nid])).join(' vs ')})
                   </PrimaryBtn>
                   {topNominees.map(nid => (
-                    <GhostBtn key={nid} onClick={() => sendHostAction({ type: 'host_eliminate', userId: nid })} style={{ fontSize: 11, padding: '7px 12px' }}>
+                    <GhostBtn key={nid} onClick={() => sendHostAction({ type: 'vote_eliminate', userId: nid })} style={{ fontSize: 11, padding: '7px 12px' }}>
                       Eliminate {displayName(users[nid])}
                     </GhostBtn>
                   ))}
@@ -141,7 +141,7 @@ export function VotingControls({
                     Vote to eliminate all
                   </PrimaryBtn>
                   {topNominees.map(nid => (
-                    <GhostBtn key={nid} onClick={() => sendHostAction({ type: 'host_eliminate', userId: nid })} style={{ fontSize: 11, padding: '7px 12px' }}>
+                    <GhostBtn key={nid} onClick={() => sendHostAction({ type: 'vote_eliminate', userId: nid })} style={{ fontSize: 11, padding: '7px 12px' }}>
                       Eliminate {displayName(users[nid])}
                     </GhostBtn>
                   ))}

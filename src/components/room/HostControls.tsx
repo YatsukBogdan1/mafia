@@ -22,6 +22,7 @@ export function HostControls({
     : Object.values(users)
   ).filter(u => u.isAlive && u.type === 'player');
   const inGame = phase.type === 'game';
+  const rolesAssigned = inGame && userOrder.length > 0 && users[userOrder[0]]?.role !== null;
 
   const aliveOrder = userOrder.filter(id => users[id]?.isAlive && users[id]?.type === 'player');
   const suggestedSpeakerId = inGame && aliveOrder.length > 0 ? aliveOrder[(round - 1) % aliveOrder.length] : null;
@@ -89,15 +90,14 @@ export function HostControls({
       )}
 
       {/* In Game */}
-      {inGame && (
-        <>
-          {/* Assign Roles (before roles are distributed) */}
-          {userOrder.length > 0 && users[userOrder[0]]?.role === null && (
-            <PrimaryBtn onClick={() => sendHostAction({ type: 'assign_roles' })}>
-              Assign Roles
-            </PrimaryBtn>
-          )}
+      {inGame && !rolesAssigned && (
+        <PrimaryBtn onClick={() => sendHostAction({ type: 'assign_roles' })}>
+          Assign Roles
+        </PrimaryBtn>
+      )}
 
+      {rolesAssigned && (
+        <>
           {/* Round */}
           <SectionLabel>Round</SectionLabel>
           <Card style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

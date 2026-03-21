@@ -96,6 +96,7 @@ export type GameAction =
   | { type: 'start_nominee_vote' }                    // host starts vote on next nominee
   | { type: 'cast_vote'; voterId: UserId }
   | { type: 'host_eliminate'; userId: UserId }
+  | { type: 'vote_eliminate'; userId: UserId }
   | { type: 'host_save' }
   | { type: 'next_round' }
   | { type: 'reset_game' }
@@ -131,6 +132,7 @@ export type S2CMessage =
   | { type: 'sandbox_view'; userId: UserId; state: ClientGameState; role: PlayerRole | null; mediaStates: Record<UserId, { canPublish: boolean; canSee: UserId[] }> }
   | { type: 'room_list'; rooms: Array<{ code: string; hostName: string; playerCount: number; phase: string }> }
   | { type: 'session_replaced' }
+  | { type: 'kicked' }
   | { type: 'error'; message: string }
   | { type: 'pong' };
 

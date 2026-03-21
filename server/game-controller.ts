@@ -42,7 +42,10 @@ export function handleConnection(ws: WebSocket, authUserId: string | null): void
 function handleMessage(ws: WebSocket, msg: C2SMessage, authUserId: string | null): void {
   switch (msg.type) {
     case 'create_room':
-      handleCreateRoom(ws, msg.playerName, msg.settings, authUserId);
+      handleCreateRoom(ws, msg.playerName, msg.settings, authUserId).catch((err) => {
+        console.error('create_room error:', err);
+        send(ws, { type: 'error', message: 'Failed to create room' });
+      });
       break;
     case 'join_room':
       handleJoinRoom(ws, msg.roomCode, msg.playerName, authUserId);

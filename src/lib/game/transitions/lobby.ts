@@ -22,6 +22,21 @@ export function handlePlayerJoin(state: GameRoom, userId: UserId, name: string):
 export function handlePlayerLeave(state: GameRoom, userId: UserId): GameRoom {
   const user = state.users[userId];
   if (!user) throw new InvalidActionError('Player not found');
+
+  // In lobby: remove the player entirely (no game state to preserve)
+  // But never remove the host — just mark them disconnected so they can reconnect
+  if (state.phase.type === 'lobby') {
+    if (user.type === 'host') {
+      return {
+        ...state,
+        users: { ...state.users, [userId]: { ...user, isConnected: false } },
+      };
+    }
+    const { [userId]: _, ...remaining } = state.users;
+    return { ...state, users: remaining };
+  }
+
+  // During game/gameover: just mark disconnected to keep game consistent
   return {
     ...state,
     users: { ...state.users, [userId]: { ...user, isConnected: false } },
@@ -71,7 +86,10 @@ export function handleAssignRoles(state: GameRoom): GameRoom {
     throw new InvalidActionError('Roles already assigned');
   }
 
-  const userIds = state.userOrder.filter(id => state.users[id]?.isAlive);
+  const userIds = state.userOrder.filter(id => {
+    const u = state.users[id];
+    return u?.isAlive && u.type === 'player';
+  });
   const roleAssignments = assignRoles(userIds, state.settings.roleDistribution);
   const users = { ...state.users };
   for (const [id, role] of Object.entries(roleAssignments)) {

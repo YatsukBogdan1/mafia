@@ -57,7 +57,7 @@ export function handleAction(ws: WebSocket, action: GameAction, isHostAction: bo
       const kickedKey = socketKey(info.roomCode, action.userId);
       const kickedWs = userSockets.get(kickedKey);
       if (kickedWs) {
-        send(kickedWs, { type: 'error', message: 'You have been kicked from the room' });
+        send(kickedWs, { type: 'kicked' });
         connections.delete(kickedWs);
         userSockets.delete(kickedKey);
         kickedWs.close();
@@ -95,6 +95,7 @@ async function handleLivekitSideEffects(prevState: GameRoom, newState: GameRoom,
       break;
     }
     case 'host_eliminate':
+    case 'vote_eliminate':
       await livekit.setSpectator(livekitRoomName, action.userId);
       break;
     case 'reset_game':

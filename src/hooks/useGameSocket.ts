@@ -124,6 +124,10 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
           break;
         case 'state_update':
           setGameState(msg.state);
+          // Clear stale role when game resets to lobby
+          if (msg.state.phase.type === 'lobby') {
+            setMyRole(null);
+          }
           break;
         case 'role_assigned':
           setMyRole(msg.role);
@@ -131,6 +135,15 @@ export function useGameSocket({ url, forceRoomCode }: UseGameSocketOptions): Use
         case 'session_replaced':
           sessionReplacedRef.current = true;
           setError('Connected from another device');
+          break;
+        case 'kicked':
+          sessionReplacedRef.current = true; // prevent auto-reconnect
+          try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+          setGameState(null);
+          setRoomCode(null);
+          setMyUserId(null);
+          setMyRole(null);
+          setError('You have been kicked from the room');
           break;
         case 'error':
           setReconnectPending(false);

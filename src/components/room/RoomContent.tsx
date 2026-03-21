@@ -91,7 +91,9 @@ export function RoomContent({ roomId }: Props) {
   }
 
   const isHost = myUserId === gameState.hostId;
-  const isSpectator = myUserId ? (gameState.users[myUserId]?.type === 'spectator') : false;
+  const myUser = myUserId ? gameState.users[myUserId] : undefined;
+  const isSpectator = myUser?.type === 'spectator';
+  const canPublish = !!myUser && myUser.isAlive && myUser.type !== 'spectator';
   const phase = gameState.phase;
   const users = Object.values(gameState.users);
 
@@ -191,6 +193,8 @@ export function RoomContent({ roomId }: Props) {
             initialMic={user.mediaPrefs.mic}
             onMediaChange={handleMediaChange}
             hideLeave={phase.type === 'game'}
+            canPublish={canPublish}
+            isGameOver={phase.type === 'gameover'}
           />
         </div>
 

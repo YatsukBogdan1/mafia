@@ -26,6 +26,9 @@ async function main() {
 
   const expressApp = express();
 
+  // Trust Railway's reverse proxy so secure cookies work behind TLS termination
+  if (!dev) expressApp.set('trust proxy', 1);
+
   // Keep middleware references so we can run them manually on WS upgrades
   const sessionOptions: SessionOptions = {
     secret: process.env.SESSION_SECRET ?? 'change-me-in-production',

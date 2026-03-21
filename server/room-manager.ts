@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { GameRoom, UserId, UserType, RoomSettings } from '../src/lib/game/types';
+import type { GameRoom, UserId, UserType, RoomSettings, User } from '../src/lib/game/types';
 import {
   createEmptySpeakingState,
   createEmptyVoteState,
@@ -11,26 +11,16 @@ import { transition } from '../src/lib/game/state-machine';
 const rooms = new Map<string, GameRoom>();
 
 export function createRoom(
-  hostName: string,
+  host: User,
   settingsOverride?: Partial<RoomSettings>,
-  explicitHostId?: string,
-): { room: GameRoom; hostId: UserId } {
+): GameRoom {
   const code = nanoid(ROOM_CODE_LENGTH).toUpperCase();
-  const hostId = explicitHostId ?? nanoid(10);
 
   const room: GameRoom = {
     code,
-    hostId,
+    hostId: host.id,
     users: {
-      [hostId]: {
-        id: hostId,
-        name: hostName,
-        seatNumber: null,
-        role: null,
-        isAlive: true,
-        type: 'host',
-        isConnected: true,
-      },
+      [host.id]: host,
     },
     userOrder: [],
     phase: { type: 'lobby' },
@@ -44,7 +34,7 @@ export function createRoom(
   };
 
   rooms.set(code, room);
-  return { room, hostId };
+  return room;
 }
 
 export type JoinRoomResult =

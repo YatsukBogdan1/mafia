@@ -1,27 +1,45 @@
 import type WebSocket from 'ws';
-import type { RoomSettings } from '../../src/lib/game/types';
+import type { RoomSettings, User } from '../../src/lib/game/types';
 import { transition } from '../../src/lib/game/state-machine';
 import { createRoom, joinRoom, getRoom, updateRoom } from '../room-manager';
 import type { JoinRoomResult } from '../room-manager';
+import { User as UserModel } from '../models/user';
 import { connections, userSockets, socketKey, send } from '../connection-state';
 import { broadcastState } from './state-broadcast';
 
-export function handleCreateRoom(
+export async function handleCreateRoom(
   ws: WebSocket,
   playerName: string,
   settings: Partial<RoomSettings> | undefined,
   authUserId: string | null,
-): void {
+): Promise<void> {
   if (!authUserId) {
     send(ws, { type: 'error', message: 'Authentication required' });
     return;
   }
-  const { room, hostId } = createRoom(playerName, settings, authUserId);
 
-  connections.set(ws, { roomCode: room.code, userId: hostId });
-  userSockets.set(socketKey(room.code, hostId), ws);
+  const dbUser = await UserModel.findById(authUserId).select('-password');
+  if (!dbUser) {
+    send(ws, { type: 'error', message: 'User not found' });
+    return;
+  }
 
-  send(ws, { type: 'room_created', roomCode: room.code, userId: hostId });
+  const host: User = {
+    id: dbUser._id.toString(),
+    name: dbUser.displayName || playerName,
+    seatNumber: null,
+    role: null,
+    isAlive: true,
+    type: 'host',
+    isConnected: true,
+  };
+
+  const room = createRoom(host, settings);
+
+  connections.set(ws, { roomCode: room.code, userId: authUserId });
+  userSockets.set(socketKey(room.code, authUserId), ws);
+
+  send(ws, { type: 'room_created', roomCode: room.code, userId: authUserId });
   broadcastState(room.code);
 }
 
